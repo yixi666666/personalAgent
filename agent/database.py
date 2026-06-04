@@ -1,7 +1,7 @@
 import sqlite3
 import os
 from typing import Optional
-from app.config import get_config
+from agent.config import get_config
 
 
 _db_connection: Optional[sqlite3.Connection] = None

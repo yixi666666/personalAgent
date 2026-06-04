@@ -2,8 +2,8 @@ import uuid
 import logging
 from datetime import datetime
 from typing import Optional
-from app.database import get_db
-from app.models.conversation import (
+from agent.database import get_db
+from agent.models.conversation import (
     ConversationListItem,
     ConversationDetailResponse,
     MessageItem,

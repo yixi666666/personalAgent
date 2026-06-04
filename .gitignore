@@ -1,25 +1,41 @@
-venv/
+# 子项目的 venv
+agent/.venv/
+toolservice/.venv/
+
+# 子项目的 node_modules
+web/node_modules/
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+dist/
+build/
 
+# 数据
 data/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
 
-config.yaml
+# 子项目各自的 config.yaml 由子项目 .gitignore 管理
 
+# 环境变量
 .env
 *.log
 
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 
+# Trae
 .trae/
 
-*.egg-info/
-dist/
-build/
+# 模型说明文档
+agent/LLM-Introduction-Introduction/
+
+# Web 构建产物
+web/dist/

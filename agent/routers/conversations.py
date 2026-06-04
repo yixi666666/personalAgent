@@ -1,10 +1,9 @@
 from fastapi import APIRouter, HTTPException, Query
-from app.models.conversation import (
+from agent.models.conversation import (
     ConversationListResponse,
     ConversationDetailResponse,
-    DeleteConversationResponse,
 )
-from app.services.conversation import get_conversation_manager
+from agent.services.conversation import get_conversation_manager
 
 router = APIRouter()
 

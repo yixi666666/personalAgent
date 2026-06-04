@@ -6,14 +6,14 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-export async function chatCompletions(messages, conversationId = null, model = 'Arch-Agent-3B') {
+export async function chatCompletions(messages, conversationId = null, model = 'xop3qwen1b7') {
   const payload = { model, messages, stream: false, max_tokens: 2048 }
   if (conversationId) payload.conversation_id = conversationId
   const { data } = await api.post('/chat/completions', payload)
   return data
 }
 
-export async function chatCompletionsStream(messages, conversationId = null, model = 'Arch-Agent-3B', onChunk = () => {}, onDone = () => {}, onError = () => {}) {
+export async function chatCompletionsStream(messages, conversationId = null, model = 'xop3qwen1b7', onChunk = () => {}, onDone = () => {}, onError = () => {}) {
   const payload = { model, messages, stream: true, max_tokens: 2048 }
   if (conversationId) payload.conversation_id = conversationId
 
