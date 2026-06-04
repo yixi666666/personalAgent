@@ -1,22 +1,28 @@
 import logging
 from datetime import datetime
-from app.tools.base import BaseTool
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class DateInfo(BaseTool):
+class DateInfoTool:
+    """自研工具：获取当前日期和时间信息"""
+
     @property
     def name(self) -> str:
-        return "DateInfo"
+        return "date_info"
 
     @property
     def description(self) -> str:
         return "获取当前日期和时间信息"
 
     @property
-    def parameters(self) -> list[dict]:
-        return []
+    def parameters(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        }
 
     def execute(self, **kwargs) -> str:
         now = datetime.now()

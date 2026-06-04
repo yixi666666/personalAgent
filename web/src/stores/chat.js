@@ -9,7 +9,7 @@ export const useChatStore = defineStore('chat', () => {
   const loading = ref(false)
   const streaming = ref(false)
   const models = ref([])
-  const currentModel = ref('Arch-Agent-3B')
+  const currentModel = ref('xop3qwen1b7')
   const tools = ref([])
 
   const currentConversation = computed(() =>
@@ -67,9 +67,7 @@ export const useChatStore = defineStore('chat', () => {
     }
     messages.value.push(assistantMsg)
 
-    const apiMessages = messages.value
-      .filter((m) => m.role === 'user' || (m.role === 'assistant' && !m.isStreaming))
-      .map((m) => ({ role: m.role, content: m.content }))
+    const apiMessages = [{ role: 'user', content }]
 
     try {
       await api.chatCompletionsStream(
@@ -88,6 +86,10 @@ export const useChatStore = defineStore('chat', () => {
           if (chunk.delta && chunk.delta.content) {
             const msg = messages.value.find((m) => m.id === assistantMsg.id)
             if (msg) msg.content += chunk.delta.content
+          }
+          if (chunk.content_replace) {
+            const msg = messages.value.find((m) => m.id === assistantMsg.id)
+            if (msg) msg.content = chunk.content_replace.content
           }
           if (chunk.finish_reason === 'stop') {
             const msg = messages.value.find((m) => m.id === assistantMsg.id)

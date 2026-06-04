@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter
-from app.models.chat import ModelListResponse, ModelInfo
-from app.config import get_config
+from agent.models.chat import ModelListResponse, ModelInfo
+from agent.config import get_config
 
 logger = logging.getLogger(__name__)
 
