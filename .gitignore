@@ -35,7 +35,19 @@ data/
 .trae/
 
 # 模型说明文档
-agent/LLM-Introduction-Introduction/
+agent/LLM-Introduction/
+
+# 项目说明文档
+agent/Supporting-Documentation.md
+toolservice/Supporting-Documentation.md
+web/Supporting-Documentation.md
+
+# 本地运维脚本和笔记
+stop-all.ps1
+端口占用解决方案.md
+
+# RagBase 参考资料
+RagBase/
 
 # Web 构建产物
 web/dist/

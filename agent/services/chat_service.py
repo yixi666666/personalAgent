@@ -1,483 +1,826 @@
-import uuid
 import json
 import re
+import uuid
 import logging
 from typing import Optional, AsyncGenerator
-
-from agent.services.conversation import get_conversation_manager
-from agent.services.context import get_context_manager
-from agent.services.tool_manager import get_tool_manager
 from agent.services.llm_client import get_llm_client
+from agent.services.context import get_context_manager
+from agent.services.session import get_session_manager
+from agent.services.tool_manager import get_tool_manager
 from agent.config import get_config
 
 logger = logging.getLogger(__name__)
 
-MAX_TOOL_CALL_ROUNDS = 5
-
-
-# ── 文本解析辅助函数 ──────────────────────────────────────────
-
-
-def parse_tool_calls_from_text(text: str) -> list[dict] | None:
-    """从模型输出的文本中解析工具调用JSON
-
-    支持两种格式：
-    1. JSON格式: {"tool_calls": [{"name": "...", "arguments": {...}}]}
-    2. XML标签格式(Arch-Agent): <tool_call>{"name": "...", "arguments": {...}}</tool_call>
-    """
-    tool_calls = []
-
-    # 优先尝试 <tool_call> XML 标签格式（Arch-Agent-3B 等模型使用）
-    xml_pattern = r'<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>'
-    xml_matches = re.findall(xml_pattern, text)
-    if xml_matches:
-        for i, match_str in enumerate(xml_matches):
-            try:
-                data = json.loads(match_str)
-                tool_calls.append({
-                    "id": f"call_{i}",
-                    "type": "function",
-                    "function": {
-                        "name": data.get("name", ""),
-                        "arguments": json.dumps(data.get("arguments", {}), ensure_ascii=False),
-                    },
-                })
-            except (json.JSONDecodeError, KeyError) as e:
-                logger.warning(f"解析<tool_call>JSON失败: {e}")
-        if tool_calls:
-            return tool_calls
-
-    # 回退到 JSON 格式匹配
-    pattern = r'```json\s*(\{[\s\S]*?"tool_calls"[\s\S]*?\})\s*```'
-    match = re.search(pattern, text)
-    if not match:
-        pattern2 = r'(\{"tool_calls"\s*:\s*\[[\s\S]*?\]})'
-        match = re.search(pattern2, text)
-    if not match:
-        return None
-
-    try:
-        data = json.loads(match.group(1))
-        raw_calls = data.get("tool_calls", [])
-        if not raw_calls:
-            return None
-        for i, call in enumerate(raw_calls):
-            tool_calls.append({
-                "id": f"call_{i}",
-                "type": "function",
-                "function": {
-                    "name": call.get("name", ""),
-                    "arguments": json.dumps(call.get("arguments", {}), ensure_ascii=False),
-                },
-            })
-        return tool_calls
-    except (json.JSONDecodeError, KeyError) as e:
-        logger.warning(f"解析工具调用JSON失败: {e}")
-        return None
-
-
-def strip_tool_call_text(text: str) -> str:
-    """从文本中移除工具调用JSON块，保留其余内容
-
-    支持移除两种格式：
-    1. JSON格式: {"tool_calls": [...]} 或 ```json ... ```
-    2. XML标签格式: <tool_call>...</tool_call>
-    """
-    result = re.sub(r'<tool_call>\s*\{[\s\S]*?\}\s*</tool_call>', '', text)
-    result = re.sub(r'```json\s*\{[\s\S]*?"tool_calls"[\s\S]*?\}\s*```', '', result)
-    result = re.sub(r'\{"tool_calls"\s*:\s*\[[\s\S]*?\]}', '', result)
-    return result.strip()
-
-
-# ── ChatService ──────────────────────────────────────────────
-
 
 class ChatService:
-    """对话编排服务：协调 LLM、工具管理、上下文和会话管理"""
+    """聊天服务：协调会话管理、上下文构建、LLM调用和工具执行"""
 
-    def __init__(self):
-        self._conv_manager = get_conversation_manager()
-        self._ctx_manager = get_context_manager()
-        self._tool_manager = get_tool_manager()
-        self._llm_client = get_llm_client()
-        self._config = get_config()
+    async def prepare_session(
+        self, session_id: Optional[str], prompt: str, model: str
+    ) -> tuple[str, list[dict], str]:
+        """准备会话：创建或获取会话，保存用户消息，构建LLM上下文
 
-    # ── 公共接口 ────────────────────────────────────────────
-
-    async def prepare_conversation(
-        self,
-        conversation_id: Optional[str],
-        messages: list[dict],
-        model: str,
-    ) -> tuple[str, list[dict]]:
+        返回: (session_id, llm_messages, user_msg_id)
         """
-        准备会话上下文：校验/创建会话，构建LLM消息列表。
-        返回 (conversation_id, llm_messages)。
-        """
-        provider = self._config.resolve_model_provider(model)
-        supports_tools = provider.get("supports_tools", True)
+        session_manager = get_session_manager()
 
-        if conversation_id:
-            if not self._conv_manager.conversation_exists(conversation_id):
-                raise ValueError(f"会话不存在: {conversation_id}")
-        else:
-            conv = self._conv_manager.create_conversation()
-            conversation_id = conv["conversation_id"]
+        # 创建或获取会话
+        if not session_id:
+            session = session_manager.create_session()
+            session_id = session["id"]
 
-        new_messages = [
-            {"role": m["role"], "content": m["content"]}
-            for m in messages
-            if m.get("role") == "user"
-        ]
+        if not session_manager.session_exists(session_id):
+            raise ValueError(f"会话不存在: {session_id}")
 
-        tool_schemas = await self._tool_manager.get_tool_schemas_for_llm()
-        llm_messages = self._ctx_manager.build_llm_messages(
-            conversation_id,
-            new_messages,
-            tool_schemas=tool_schemas if not supports_tools else None,
-            supports_tools=supports_tools,
+        # 保存用户消息
+        parent_id = session_manager.get_last_message_id(session_id)
+        user_msg = session_manager.add_message(
+            session_id=session_id,
+            role="user",
+            content=prompt,
+            parent_id=parent_id,
         )
 
-        for msg in new_messages:
-            self._conv_manager.add_message(conversation_id, msg["role"], msg["content"])
-
-        return conversation_id, llm_messages
-
-    async def chat(
-        self,
-        messages: list[dict],
-        model: str,
-        max_tokens: int,
-        temperature: Optional[float] = None,
-        conversation_id: Optional[str] = None,
-    ) -> dict:
-        """
-        非流式对话：执行工具调用循环，返回最终结果。
-        返回 {"content": str, "tool_calls": list, "usage": dict}
-        """
-        provider = self._config.resolve_model_provider(model)
+        # 获取模型配置
+        config = get_config()
+        provider = config.resolve_model_provider(model)
         supports_tools = provider.get("supports_tools", True)
+        is_local = provider.get("provider") == "local"
 
-        tool_schemas = await self._tool_manager.get_tool_schemas_for_llm()
-        tools_param = tool_schemas if (tool_schemas and supports_tools) else None
+        # 构建LLM消息
+        context_manager = get_context_manager()
+        tool_manager = get_tool_manager()
+        tool_schemas = await tool_manager.get_tool_schemas_for_llm()
 
-        all_tool_call_records = []
-        current_messages = list(messages)
+        llm_messages = context_manager.build_llm_messages(
+            session_id=session_id,
+            new_messages=[],
+            tool_schemas=tool_schemas,
+            supports_tools=supports_tools,
+            is_local=is_local,
+            model=model,
+        )
 
-        for round_num in range(MAX_TOOL_CALL_ROUNDS):
-            try:
-                llm_result = await self._llm_client.chat(
-                    current_messages,
-                    model=model,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    tools=tools_param,
-                )
-            except Exception as e:
-                logger.error(f"LLM调用失败: {e}")
-                raise
-
-            choice = llm_result.get("choices", [{}])[0]
-            assistant_message = choice.get("message", {})
-            tool_calls = assistant_message.get("tool_calls")
-
-            if not supports_tools and not tool_calls:
-                content = assistant_message.get("content", "")
-                parsed_calls = parse_tool_calls_from_text(content)
-                if parsed_calls:
-                    tool_calls = parsed_calls
-                    assistant_message["content"] = strip_tool_call_text(content)
-                else:
-                    return {
-                        "content": content,
-                        "tool_calls": all_tool_call_records,
-                        "usage": llm_result.get("usage", {}),
-                    }
-
-            if not tool_calls:
-                # 保存助手最终回复到数据库
-                if conversation_id:
-                    self._conv_manager.add_message(conversation_id, "assistant", assistant_message.get("content", ""))
-                return {
-                    "content": assistant_message.get("content", ""),
-                    "tool_calls": all_tool_call_records,
-                    "usage": llm_result.get("usage", {}),
-                }
-
-            logger.info(f"第{round_num + 1}轮工具调用，共{len(tool_calls)}个工具调用")
-
-            # 保存助手消息（含 tool_calls）到数据库
-            if conversation_id:
-                self._conv_manager.add_message(conversation_id, "assistant", assistant_message.get("content", ""))
-            current_messages.append(assistant_message)
-            tool_messages = await self._tool_manager.execute_tool_calls(tool_calls)
-
-            if supports_tools:
-                current_messages.extend(tool_messages)
-                # 保存工具返回消息到数据库
-                if conversation_id:
-                    for tm in tool_messages:
-                        self._conv_manager.add_message(conversation_id, tm["role"], tm["content"])
-            else:
-                # 不支持原生function calling的模型，使用 <tool_response> 标签包裹工具结果
-                # 这符合 Arch-Agent-3B 等模型的 chat_template 格式
-                tool_result_parts = []
-                for tc, tm in zip(tool_calls, tool_messages):
-                    tool_result_content = tm.get("content", "")
-                    tool_result_parts.append(f"<tool_response>\n{tool_result_content}\n</tool_response>")
-                tool_result_msg = {
-                    "role": "user",
-                    "content": "\n".join(tool_result_parts),
-                }
-                current_messages.append(tool_result_msg)
-                # 保存工具返回消息到数据库
-                if conversation_id:
-                    self._conv_manager.add_message(conversation_id, tool_result_msg["role"], tool_result_msg["content"])
-
-            self._record_tool_calls(tool_calls, tool_messages, all_tool_call_records, conversation_id)
-
-        # 达到最大轮数后再调用一次LLM生成最终回复
-        try:
-            llm_result = await self._llm_client.chat(
-                current_messages,
-                model=model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-        except Exception as e:
-            logger.error(f"最终LLM调用失败: {e}")
-            raise
-
-        choice = llm_result.get("choices", [{}])[0]
-        final_content = choice.get("message", {}).get("content", "")
-        # 保存最终回复到数据库
-        if conversation_id:
-            self._conv_manager.add_message(conversation_id, "assistant", final_content)
-        return {
-            "content": final_content,
-            "tool_calls": all_tool_call_records,
-            "usage": llm_result.get("usage", {}),
-        }
+        return session_id, llm_messages, user_msg.id
 
     async def stream_chat(
         self,
         messages: list[dict],
         model: str,
-        max_tokens: int,
+        max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
-        conversation_id: Optional[str] = None,
+        session_id: str = "",
+        parent_id: Optional[str] = None,
     ) -> AsyncGenerator[dict, None]:
+        """流式对话
+
+        本地模型（Arch-Agent-3B）使用 stream=false + tools 非流式路径，
+        其他模型使用 stream=true 流式路径。
         """
-        流式对话生成器，yield 事件字典。
-        事件类型：
-          - {"type": "conversation_id", "conversation_id": str}
-          - {"type": "delta", "content": str}
-          - {"type": "tool_calls", "tool_calls": list}
-          - {"type": "finish", "finish_reason": str}
-          - {"type": "error", "error": str}
-        """
-        provider = self._config.resolve_model_provider(model)
+        config = get_config()
+        provider = config.resolve_model_provider(model)
         supports_tools = provider.get("supports_tools", True)
+        is_local = provider.get("provider") == "local"
 
-        tool_schemas = await self._tool_manager.get_tool_schemas_for_llm()
-        tools_param = tool_schemas if (tool_schemas and supports_tools) else None
+        # 本地模型 + 支持tools → 使用 stream=false + tools 非流式路径
+        if is_local and supports_tools:
+            async for event in self._non_stream_chat(
+                messages=messages,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                session_id=session_id,
+                parent_id=parent_id,
+            ):
+                yield event
+            return
 
-        current_messages = list(messages)
+        # 获取工具schema：supports_tools=True 时通过API传递tools
+        # supports_tools=False 时工具描述嵌入系统提示词
+        tools = None
+        if supports_tools:
+            tool_manager = get_tool_manager()
+            tools = await tool_manager.get_tool_schemas_for_llm()
+
+        # 调用LLM流式
+        llm_client = get_llm_client()
         full_content = ""
-        all_tool_call_records = []
+        tool_calls_buffer = []
 
-        for round_num in range(MAX_TOOL_CALL_ROUNDS):
+        async for chunk_str in llm_client.chat_stream(
+            messages=messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=tools,
+            supports_tools=supports_tools,
+        ):
             try:
-                assistant_message = {"role": "assistant", "content": ""}
-                tool_calls_in_round = []
+                chunk = json.loads(chunk_str)
+            except json.JSONDecodeError:
+                continue
 
-                if not supports_tools:
-                    # 不支持function calling：实时流式输出，流结束后检测工具调用
-                    try:
-                        async for chunk_data in self._llm_client.chat_stream(
-                            current_messages,
+            choices = chunk.get("choices", [])
+            if not choices:
+                continue
+
+            choice = choices[0]
+            delta = choice.get("delta", {})
+            finish_reason = choice.get("finish_reason")
+
+            # 处理增量内容
+            if delta.get("content"):
+                full_content += delta["content"]
+                yield {"type": "delta", "content": delta["content"]}
+
+            # 处理工具调用增量
+            if delta.get("tool_calls"):
+                for tc in delta["tool_calls"]:
+                    idx = tc.get("index", 0)
+                    while len(tool_calls_buffer) <= idx:
+                        tool_calls_buffer.append({
+                            "id": "",
+                            "type": "function",
+                            "function": {"name": "", "arguments": ""},
+                        })
+                    if tc.get("id"):
+                        tool_calls_buffer[idx]["id"] = tc["id"]
+                    if tc.get("function", {}).get("name"):
+                        tool_calls_buffer[idx]["function"]["name"] += tc["function"]["name"]
+                    if tc.get("function", {}).get("arguments"):
+                        tool_calls_buffer[idx]["function"]["arguments"] += tc["function"]["arguments"]
+
+            # 流结束
+            if finish_reason:
+                if finish_reason == "tool_calls" and tool_calls_buffer:
+                    # 保存助手消息（工具调用）
+                    session_manager = get_session_manager()
+                    assistant_msg = session_manager.add_message(
+                        session_id=session_id,
+                        role="assistant",
+                        content=full_content or "",
+                        parent_id=parent_id,
+                    )
+
+                    yield {"type": "tool_calls", "tool_calls": tool_calls_buffer}
+
+                    # 执行工具调用
+                    tool_manager = get_tool_manager()
+                    tool_results = await tool_manager.execute_tool_calls(tool_calls_buffer)
+
+                    # 保存工具调用记录和工具结果消息
+                    for i, tc in enumerate(tool_calls_buffer):
+                        tool_name = tc.get("function", {}).get("name", "unknown")
+                        arguments_str = tc.get("function", {}).get("arguments", "{}")
+                        tool_call_id = tc.get("id", f"call_{uuid.uuid4().hex[:8]}")
+                        result_msg = tool_results[i] if i < len(tool_results) else {}
+                        result_content = result_msg.get("content", "")
+
+                        # 判断工具调用是否成功
+                        call_status = "success"
+                        error_message = None
+                        try:
+                            result_obj = json.loads(result_content)
+                            if isinstance(result_obj, dict) and result_obj.get("code") and result_obj["code"] != "success":
+                                call_status = "error"
+                                error_message = result_obj.get("message", "")
+                        except (json.JSONDecodeError, KeyError):
+                            pass
+
+                        # 保存tool_call记录，使用LLM返回的原始tool_call id
+                        session_manager.save_tool_call(
+                            message_id=assistant_msg.id,
+                            tool_name=tool_name,
+                            parameters=arguments_str,
+                            result=result_content,
+                            status=call_status,
+                            error_message=error_message,
+                            call_id=tool_call_id,
+                        )
+
+                        # 保存tool结果消息
+                        session_manager.add_message(
+                            session_id=session_id,
+                            role="tool",
+                            content=result_content,
+                            parent_id=assistant_msg.id,
+                        )
+
+                    # 构建新的上下文继续对话
+                    config = get_config()
+                    provider = config.resolve_model_provider(model)
+                    supports_tools_new = provider.get("supports_tools", True)
+                    is_local_new = provider.get("provider") == "local"
+
+                    context_manager = get_context_manager()
+                    new_tool_schemas = None
+                    if supports_tools_new:
+                        new_tool_schemas = await tool_manager.get_tool_schemas_for_llm()
+
+                    new_messages = context_manager.build_llm_messages(
+                        session_id=session_id,
+                        new_messages=[],
+                        tool_schemas=new_tool_schemas,
+                        supports_tools=supports_tools_new,
+                        is_local=is_local_new,
+                        model=model,
+                    )
+
+                    # 递归流式调用
+                    async for event in self.stream_chat(
+                        messages=new_messages,
+                        model=model,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        session_id=session_id,
+                        parent_id=assistant_msg.id,
+                    ):
+                        yield event
+                    return
+
+                # 正常结束 - 检查是否需要从文本中提取工具调用
+                if full_content and not supports_tools:
+                    extracted_calls, parse_errors = self._extract_and_validate_tool_calls(full_content)
+
+                    if extracted_calls:
+                        # 保存助手消息，保留原始内容（包含工具调用JSON的文本）
+                        session_manager = get_session_manager()
+                        assistant_msg = session_manager.add_message(
+                            session_id=session_id,
+                            role="assistant",
+                            content=full_content,
+                            parent_id=parent_id,
+                        )
+
+                        yield {"type": "content_replace", "content": ""}
+
+                        yield {"type": "tool_calls", "tool_calls": extracted_calls}
+
+                        # 执行工具调用
+                        tool_manager = get_tool_manager()
+                        tool_results = await tool_manager.execute_tool_calls(extracted_calls)
+
+                        # 保存工具调用记录和工具结果消息
+                        for i, tc in enumerate(extracted_calls):
+                            tool_name = tc.get("function", {}).get("name", "unknown")
+                            arguments_str = tc.get("function", {}).get("arguments", "{}")
+                            tool_call_id = tc.get("id", f"call_{uuid.uuid4().hex[:8]}")
+                            result_msg = tool_results[i] if i < len(tool_results) else {}
+                            result_content = result_msg.get("content", "")
+
+                            # 判断工具调用是否成功
+                            call_status = "success"
+                            error_message = None
+                            try:
+                                result_obj = json.loads(result_content)
+                                if isinstance(result_obj, dict) and result_obj.get("code") and result_obj["code"] != "success":
+                                    call_status = "error"
+                                    error_message = result_obj.get("message", "")
+                            except (json.JSONDecodeError, KeyError):
+                                pass
+
+                            session_manager.save_tool_call(
+                                message_id=assistant_msg.id,
+                                tool_name=tool_name,
+                                parameters=arguments_str,
+                                result=result_content,
+                                status=call_status,
+                                error_message=error_message,
+                                call_id=tool_call_id,
+                            )
+
+                            session_manager.add_message(
+                                session_id=session_id,
+                                role="tool",
+                                content=result_content,
+                                parent_id=assistant_msg.id,
+                            )
+
+                        # 构建新的上下文继续对话
+                        config = get_config()
+                        provider = config.resolve_model_provider(model)
+                        supports_tools_new = provider.get("supports_tools", True)
+                        is_local_new = provider.get("provider") == "local"
+
+                        context_manager = get_context_manager()
+                        new_tool_schemas = None
+                        if supports_tools_new:
+                            new_tool_schemas = await tool_manager.get_tool_schemas_for_llm()
+
+                        new_messages = context_manager.build_llm_messages(
+                            session_id=session_id,
+                            new_messages=[],
+                            tool_schemas=new_tool_schemas,
+                            supports_tools=supports_tools_new,
+                            is_local=is_local_new,
+                            model=model,
+                        )
+
+                        # 递归流式调用
+                        async for event in self.stream_chat(
+                            messages=new_messages,
                             model=model,
                             max_tokens=max_tokens,
                             temperature=temperature,
+                            session_id=session_id,
+                            parent_id=assistant_msg.id,
                         ):
-                            try:
-                                chunk = json.loads(chunk_data)
-                                choice = chunk.get("choices", [{}])[0]
-                                delta = choice.get("delta", {})
-                                delta_content = delta.get("content", "")
-
-                                if delta_content:
-                                    full_content += delta_content
-                                    assistant_message["content"] += delta_content
-                                    # 实时流式输出
-                                    yield {"type": "delta", "content": delta_content}
-
-                                # 检查流式结束
-                                finish_reason = choice.get("finish_reason")
-                                if finish_reason:
-                                    break
-                            except json.JSONDecodeError:
-                                pass
-                    except Exception as e:
-                        error_msg = self._format_llm_error(e, model, provider)
-                        yield {"type": "error", "error": f"模型调用失败: {error_msg}"}
-                        yield {"type": "finish", "finish_reason": "stop"}
+                            yield event
                         return
 
-                    # 流结束后检测文本中的工具调用
-                    parsed_calls = parse_tool_calls_from_text(full_content)
-                    if parsed_calls:
-                        tool_calls_in_round = parsed_calls
-                        clean_content = strip_tool_call_text(full_content)
-                        # 替换已流式输出的内容为清理后的版本（移除工具调用JSON）
-                        yield {"type": "content_replace", "content": clean_content}
-                    else:
-                        # 无工具调用，内容已实时输出完毕
-                        break
-                else:
-                    # 支持function calling：流式输出
-                    try:
-                        async for chunk_data in self._llm_client.chat_stream(
-                            current_messages,
+                    elif parse_errors:
+                        # 工具调用解析/校验失败，向模型反馈错误并请求修正
+                        session_manager = get_session_manager()
+                        assistant_msg = session_manager.add_message(
+                            session_id=session_id,
+                            role="assistant",
+                            content=full_content,
+                            parent_id=parent_id,
+                        )
+
+                        error_feedback = "工具调用解析失败，请检查格式并修正：\n" + "\n".join(parse_errors)
+                        session_manager.add_message(
+                            session_id=session_id,
+                            role="user",
+                            content=error_feedback,
+                            parent_id=assistant_msg.id,
+                        )
+
+                        yield {"type": "error", "error": error_feedback}
+
+                        # 构建新的上下文请求模型修正
+                        config = get_config()
+                        provider = config.resolve_model_provider(model)
+                        supports_tools_new = provider.get("supports_tools", True)
+                        is_local_new = provider.get("provider") == "local"
+
+                        context_manager = get_context_manager()
+                        new_tool_schemas = None
+                        if supports_tools_new:
+                            new_tool_schemas = await tool_manager.get_tool_schemas_for_llm()
+
+                        new_messages = context_manager.build_llm_messages(
+                            session_id=session_id,
+                            new_messages=[],
+                            tool_schemas=new_tool_schemas,
+                            supports_tools=supports_tools_new,
+                            is_local=is_local_new,
+                            model=model,
+                        )
+
+                        async for event in self.stream_chat(
+                            messages=new_messages,
                             model=model,
                             max_tokens=max_tokens,
                             temperature=temperature,
-                            tools=tools_param,
+                            session_id=session_id,
+                            parent_id=assistant_msg.id,
                         ):
-                            try:
-                                chunk = json.loads(chunk_data)
-                                choice = chunk.get("choices", [{}])[0]
-
-                                delta = choice.get("delta", {})
-                                delta_content = delta.get("content", "")
-                                delta_tool_calls = delta.get("tool_calls")
-
-                                if delta_tool_calls:
-                                    for dtc in delta_tool_calls:
-                                        idx = dtc.get("index", 0)
-                                        while len(tool_calls_in_round) <= idx:
-                                            tool_calls_in_round.append({
-                                                "id": "",
-                                                "type": "function",
-                                                "function": {"name": "", "arguments": ""},
-                                            })
-                                        tc = tool_calls_in_round[idx]
-                                        if dtc.get("id"):
-                                            tc["id"] = dtc["id"]
-                                        if dtc.get("function", {}).get("name"):
-                                            tc["function"]["name"] += dtc["function"]["name"]
-                                        if dtc.get("function", {}).get("arguments"):
-                                            tc["function"]["arguments"] += dtc["function"]["arguments"]
-
-                                if delta_content:
-                                    full_content += delta_content
-                                    assistant_message["content"] += delta_content
-                                    yield {"type": "delta", "content": delta_content}
-
-                            except json.JSONDecodeError:
-                                pass
-                    except Exception as e:
-                        error_msg = self._format_llm_error(e, model, provider)
-                        yield {"type": "error", "error": f"模型调用失败: {error_msg}"}
-                        yield {"type": "finish", "finish_reason": "stop"}
+                            yield event
                         return
 
-                    if not tool_calls_in_round:
-                        break
+                # 普通回复 - 保存助手消息
+                if full_content:
+                    session_manager = get_session_manager()
+                    session_manager.add_message(
+                        session_id=session_id,
+                        role="assistant",
+                        content=full_content,
+                        parent_id=parent_id,
+                    )
 
-                logger.info(f"流式第{round_num + 1}轮工具调用，共{len(tool_calls_in_round)}个工具调用")
-
-                if assistant_message.get("content") or tool_calls_in_round:
-                    # 对于不支持function calling的模型，保存/追加时需清理工具调用JSON
-                    content_to_save = assistant_message.get("content", "")
-                    if tool_calls_in_round and not supports_tools:
-                        content_to_save = strip_tool_call_text(content_to_save) or None
-                    msg_to_append = {"role": "assistant", "content": content_to_save}
-                    if tool_calls_in_round and supports_tools:
-                        msg_to_append["tool_calls"] = tool_calls_in_round
-                    current_messages.append(msg_to_append)
-                    # 保存助手消息到数据库
-                    if conversation_id and content_to_save:
-                        self._conv_manager.add_message(conversation_id, "assistant", content_to_save)
-
-                tool_messages = await self._tool_manager.execute_tool_calls(tool_calls_in_round)
-                self._record_tool_calls(tool_calls_in_round, tool_messages, all_tool_call_records, conversation_id)
-
-                yield {"type": "tool_calls", "tool_calls": all_tool_call_records}
-
-                if supports_tools:
-                    current_messages.extend(tool_messages)
-                    # 保存工具返回消息到数据库
-                    if conversation_id:
-                        for tm in tool_messages:
-                            self._conv_manager.add_message(conversation_id, tm["role"], tm["content"])
-                else:
-                    # 不支持原生function calling的模型，使用 <tool_response> 标签包裹工具结果
-                    tool_result_parts = []
-                    for tc, tm in zip(tool_calls_in_round, tool_messages):
-                        tool_result_content = tm.get("content", "")
-                        tool_result_parts.append(f"<tool_response>\n{tool_result_content}\n</tool_response>")
-                    tool_result_msg = {
-                        "role": "user",
-                        "content": "\n".join(tool_result_parts),
-                    }
-                    current_messages.append(tool_result_msg)
-                    # 保存工具返回消息到数据库
-                    if conversation_id:
-                        self._conv_manager.add_message(conversation_id, tool_result_msg["role"], tool_result_msg["content"])
-
-                full_content = ""
-
-            except Exception as e:
-                error_msg = self._format_llm_error(e, model, provider)
-                yield {"type": "error", "error": f"对话处理失败: {error_msg}"}
-                yield {"type": "finish", "finish_reason": "stop"}
+                yield {"type": "finish", "finish_reason": finish_reason}
                 return
 
-        self._conv_manager.add_message(conversation_id, "assistant", full_content)
+        # 如果流正常结束但没有finish_reason
+        if full_content:
+            session_manager = get_session_manager()
+            session_manager.add_message(
+                session_id=session_id,
+                role="assistant",
+                content=full_content,
+                parent_id=parent_id,
+            )
         yield {"type": "finish", "finish_reason": "stop"}
 
-    def save_assistant_message(self, conversation_id: str, content: str):
-        """保存assistant消息到会话"""
-        self._conv_manager.add_message(conversation_id, "assistant", content)
-
-    # ── 内部辅助 ────────────────────────────────────────────
-
-    def _record_tool_calls(
+    async def _non_stream_chat(
         self,
-        tool_calls: list[dict],
-        tool_messages: list[dict],
-        all_records: list[dict],
-        conversation_id: Optional[str],
-    ):
-        """记录工具调用结果到列表和会话存储"""
-        for tc, tm in zip(tool_calls, tool_messages):
-            tool_name = tc.get("function", {}).get("name", "unknown")
-            tool_args_str = tc.get("function", {}).get("arguments", "{}")
-            tool_result_content = tm.get("content", "")
-            all_records.append({
-                "tool_name": tool_name,
-                "tool_args": tool_args_str,
-                "result": tool_result_content,
-            })
-            if conversation_id:
-                try:
-                    self._conv_manager.save_tool_call(
-                        conversation_id,
-                        tool_name,
-                        tool_args_str,
-                        tool_result_content,
-                    )
-                except Exception as e:
-                    logger.warning(f"保存工具调用记录失败: {e}")
+        messages: list[dict],
+        model: str,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        session_id: str = "",
+        parent_id: Optional[str] = None,
+        _format_retry_count: int = 0,
+    ) -> AsyncGenerator[dict, None]:
+        """非流式对话（用于本地模型 stream=false + tools）
 
-    @staticmethod
-    def _format_llm_error(error: Exception, model: str, provider: dict) -> str:
-        """格式化LLM调用错误信息"""
-        error_msg = str(error)
-        if provider.get("provider") == "local":
-            error_msg = f"本地模型 [{model}] 不可用，请确认模型服务是否已启动"
-        return error_msg
+        完全参照模型说明文档：Arch-Agent-3B 使用 stream=false + tools 参数调用，
+        模型通过原生 function calling 返回结构化 tool_calls 字段。
+        """
+        config = get_config()
+        provider = config.resolve_model_provider(model)
+        supports_tools = provider.get("supports_tools", True)
+
+        # 获取工具schema，通过API tools参数传递
+        tool_manager = get_tool_manager()
+        tools = await tool_manager.get_tool_schemas_for_llm()
+
+        # 非流式调用
+        llm_client = get_llm_client()
+        response = await llm_client.chat_completion(
+            messages=messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=tools,
+            supports_tools=supports_tools,
+        )
+
+        # 解析非流式响应
+        choices = response.get("choices", [])
+        if not choices:
+            yield {"type": "finish", "finish_reason": "stop"}
+            return
+
+        choice = choices[0]
+        message = choice.get("message", {})
+        finish_reason = choice.get("finish_reason", "stop")
+        content = message.get("content") or ""
+        tool_calls = message.get("tool_calls")
+
+        # 处理工具调用
+        if finish_reason == "tool_calls" and tool_calls:
+            # 保存助手消息（工具调用）
+            session_manager = get_session_manager()
+            assistant_msg = session_manager.add_message(
+                session_id=session_id,
+                role="assistant",
+                content=content,
+                parent_id=parent_id,
+            )
+
+            # 将tool_calls转为标准格式
+            formatted_calls = []
+            for tc in tool_calls:
+                func = tc.get("function", {})
+                arguments = func.get("arguments", "{}")
+                if isinstance(arguments, dict):
+                    arguments = json.dumps(arguments, ensure_ascii=False)
+                formatted_calls.append({
+                    "id": tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                    "type": "function",
+                    "function": {
+                        "name": func.get("name", ""),
+                        "arguments": arguments,
+                    },
+                })
+
+            # 如果有文本内容，先发送
+            if content:
+                yield {"type": "delta", "content": content}
+
+            yield {"type": "tool_calls", "tool_calls": formatted_calls}
+
+            # 执行工具调用
+            tool_results = await tool_manager.execute_tool_calls(formatted_calls)
+
+            # 保存工具调用记录和工具结果消息
+            for i, tc in enumerate(formatted_calls):
+                tool_name = tc.get("function", {}).get("name", "unknown")
+                arguments_str = tc.get("function", {}).get("arguments", "{}")
+                tool_call_id = tc.get("id", f"call_{uuid.uuid4().hex[:8]}")
+                result_msg = tool_results[i] if i < len(tool_results) else {}
+                result_content = result_msg.get("content", "")
+
+                # 判断工具调用是否成功
+                call_status = "success"
+                error_message = None
+                try:
+                    result_obj = json.loads(result_content)
+                    if isinstance(result_obj, dict) and result_obj.get("code") and result_obj["code"] != "success":
+                        call_status = "error"
+                        error_message = result_obj.get("message", "")
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+                session_manager.save_tool_call(
+                    message_id=assistant_msg.id,
+                    tool_name=tool_name,
+                    parameters=arguments_str,
+                    result=result_content,
+                    status=call_status,
+                    error_message=error_message,
+                    call_id=tool_call_id,
+                )
+
+                session_manager.add_message(
+                    session_id=session_id,
+                    role="tool",
+                    content=result_content,
+                    parent_id=assistant_msg.id,
+                )
+
+            # 构建新的上下文继续对话
+            context_manager = get_context_manager()
+            new_tool_schemas = await tool_manager.get_tool_schemas_for_llm()
+
+            new_messages = context_manager.build_llm_messages(
+                session_id=session_id,
+                new_messages=[],
+                tool_schemas=new_tool_schemas,
+                supports_tools=supports_tools,
+                is_local=True,
+                model=model,
+            )
+
+            # 递归调用（仍走非流式路径）
+            async for event in self.stream_chat(
+                messages=new_messages,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                session_id=session_id,
+                parent_id=assistant_msg.id,
+            ):
+                yield event
+            return
+
+        # 普通回复 - 检查文本中是否包含工具调用（模型可能未使用原生function calling）
+        if content:
+            # 本地模型只接受 <tool_call> 规范格式，其他格式视为错误
+            extracted_calls, parse_errors = self._extract_and_validate_tool_calls(
+                content, model_type="local"
+            )
+
+            if extracted_calls:
+                # 保存助手消息，保留原始内容
+                session_manager = get_session_manager()
+                assistant_msg = session_manager.add_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=content,
+                    parent_id=parent_id,
+                )
+
+                yield {"type": "content_replace", "content": ""}
+                yield {"type": "tool_calls", "tool_calls": extracted_calls}
+
+                # 执行工具调用
+                tool_results = await tool_manager.execute_tool_calls(extracted_calls)
+
+                # 保存工具调用记录和工具结果消息
+                for i, tc in enumerate(extracted_calls):
+                    tool_name = tc.get("function", {}).get("name", "unknown")
+                    arguments_str = tc.get("function", {}).get("arguments", "{}")
+                    tool_call_id = tc.get("id", f"call_{uuid.uuid4().hex[:8]}")
+                    result_msg = tool_results[i] if i < len(tool_results) else {}
+                    result_content = result_msg.get("content", "")
+
+                    call_status = "success"
+                    error_message = None
+                    try:
+                        result_obj = json.loads(result_content)
+                        if isinstance(result_obj, dict) and result_obj.get("code") and result_obj["code"] != "success":
+                            call_status = "error"
+                            error_message = result_obj.get("message", "")
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+
+                    session_manager.save_tool_call(
+                        message_id=assistant_msg.id,
+                        tool_name=tool_name,
+                        parameters=arguments_str,
+                        result=result_content,
+                        status=call_status,
+                        error_message=error_message,
+                        call_id=tool_call_id,
+                    )
+
+                    session_manager.add_message(
+                        session_id=session_id,
+                        role="tool",
+                        content=result_content,
+                        parent_id=assistant_msg.id,
+                    )
+
+                # 构建新的上下文继续对话
+                context_manager = get_context_manager()
+                new_tool_schemas = await tool_manager.get_tool_schemas_for_llm()
+
+                new_messages = context_manager.build_llm_messages(
+                    session_id=session_id,
+                    new_messages=[],
+                    tool_schemas=new_tool_schemas,
+                    supports_tools=supports_tools,
+                    is_local=True,
+                    model=model,
+                )
+
+                async for event in self.stream_chat(
+                    messages=new_messages,
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    session_id=session_id,
+                    parent_id=assistant_msg.id,
+                ):
+                    yield event
+                return
+
+            elif parse_errors:
+                # 工具调用格式不规范，限制重试次数避免死循环
+                MAX_FORMAT_RETRIES = 2
+                if _format_retry_count >= MAX_FORMAT_RETRIES:
+                    error_msg = "模型多次输出非规范工具调用格式，已停止重试。错误详情：" + "; ".join(parse_errors)
+                    yield {"type": "error", "error": error_msg}
+                    yield {"type": "finish", "finish_reason": "stop"}
+                    return
+
+                session_manager = get_session_manager()
+                assistant_msg = session_manager.add_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=content,
+                    parent_id=parent_id,
+                )
+
+                error_feedback = "工具调用格式不规范，请使用 <tool_call> 标签格式。错误详情：" + "; ".join(parse_errors)
+                session_manager.add_message(
+                    session_id=session_id,
+                    role="user",
+                    content=error_feedback,
+                    parent_id=assistant_msg.id,
+                )
+
+                yield {"type": "error", "error": error_feedback}
+
+                context_manager = get_context_manager()
+                new_tool_schemas = await tool_manager.get_tool_schemas_for_llm()
+
+                new_messages = context_manager.build_llm_messages(
+                    session_id=session_id,
+                    new_messages=[],
+                    tool_schemas=new_tool_schemas,
+                    supports_tools=supports_tools,
+                    is_local=True,
+                    model=model,
+                )
+
+                async for event in self._non_stream_chat(
+                    messages=new_messages,
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    session_id=session_id,
+                    parent_id=assistant_msg.id,
+                    _format_retry_count=_format_retry_count + 1,
+                ):
+                    yield event
+                return
+
+            # 纯文本回复（无工具调用）
+            yield {"type": "delta", "content": content}
+            session_manager = get_session_manager()
+            session_manager.add_message(
+                session_id=session_id,
+                role="assistant",
+                content=content,
+                parent_id=parent_id,
+            )
+
+        yield {"type": "finish", "finish_reason": finish_reason}
+
+    def _extract_and_validate_tool_calls(self, text: str, model_type: str = "standard") -> tuple[list[dict], list[str]]:
+        """从文本中提取工具调用并校验参数
+
+        Args:
+            text: 模型输出的文本
+            model_type: 模型类型
+                - "local": 本地模型（Arch-Agent-3B），只接受 <tool_call> 规范格式
+                - "standard": 星火模型等，接受 {"tool_calls": [...]} 格式
+
+        返回: (tool_calls, parse_errors)
+        - tool_calls: 解析且校验通过的工具调用列表
+        - parse_errors: 解析或校验失败的错误信息列表
+
+        本地模型规范格式（唯一接受）：
+        <tool_call>
+        {"name": <function-name>, "arguments": <args-json-object>}
+        </tool_call>
+
+        星火模型格式：
+        {"tool_calls": [...]}
+        """
+        import jsonschema as jschema
+        from agent.services.tool_manager import get_tool_manager
+
+        raw_calls = []
+        errors = []
+
+        if model_type == "local":
+            # 本地模型：只接受 <tool_call>...</tool_call> 规范格式
+            pattern = r'<tool_call>\s*(\{.*?\})\s*</tool_call>'
+            matches = re.findall(pattern, text, re.DOTALL)
+            if matches:
+                for i, match in enumerate(matches):
+                    try:
+                        parsed = json.loads(match)
+                        name = parsed.get("name", "")
+                        arguments = parsed.get("arguments", {})
+                        if isinstance(arguments, dict):
+                            arguments = json.dumps(arguments, ensure_ascii=False)
+                        raw_calls.append({
+                            "id": f"call_{uuid.uuid4().hex[:8]}",
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": arguments,
+                            },
+                        })
+                    except (json.JSONDecodeError, KeyError) as e:
+                        errors.append(f"工具调用 #{i+1} JSON解析失败: {e}")
+            else:
+                # 文本中无 <tool_call> 标签，检测是否包含非规范工具调用意图
+                non_standard_patterns = [
+                    (r'Action:\s*\w+', "检测到非规范的 Action: 格式，本地模型只接受 <tool_call> 规范格式"),
+                    (r'"tool_calls"\s*:', "检测到非规范的 JSON tool_calls 格式，本地模型只接受 <tool_call> 规范格式"),
+                ]
+                for pattern_str, error_msg in non_standard_patterns:
+                    if re.search(pattern_str, text):
+                        errors.append(error_msg)
+                        break
+
+        else:
+            # 星火模型：接受 {"tool_calls": [...]} 格式
+            tool_calls_idx = text.find('"tool_calls"')
+            if tool_calls_idx != -1:
+                start = text.rfind('{', 0, tool_calls_idx)
+                if start != -1:
+                    depth = 0
+                    end = start
+                    for i in range(start, len(text)):
+                        if text[i] == '{':
+                            depth += 1
+                        elif text[i] == '}':
+                            depth -= 1
+                            if depth == 0:
+                                end = i + 1
+                                break
+                    candidate = text[start:end]
+                    try:
+                        parsed = json.loads(candidate)
+                        if "tool_calls" in parsed:
+                            for tc in parsed.get("tool_calls", []):
+                                call_id = tc.get("id", f"call_{uuid.uuid4().hex[:8]}")
+                                func = tc.get("function", {})
+                                name = func.get("name", "")
+                                arguments = func.get("arguments", {})
+                                if isinstance(arguments, dict):
+                                    arguments = json.dumps(arguments, ensure_ascii=False)
+                                raw_calls.append({
+                                    "id": call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": name,
+                                        "arguments": arguments,
+                                    },
+                                })
+                    except (json.JSONDecodeError, KeyError) as e:
+                        errors.append(f"JSON解析失败: {e}")
+
+        if not raw_calls:
+            return [], errors
+
+        # 用 jsonschema 校验每个工具调用的参数
+        tool_manager = get_tool_manager()
+        validated_calls = []
+        for tc in raw_calls:
+            tool_name = tc.get("function", {}).get("name", "")
+            arguments_str = tc.get("function", {}).get("arguments", "{}")
+
+            try:
+                arguments = json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
+            except json.JSONDecodeError as e:
+                errors.append(f"工具 '{tool_name}' 参数JSON解析失败: {e}")
+                continue
+
+            tool_info = tool_manager._tools.get(tool_name)
+            if not tool_info:
+                errors.append(f"未找到工具: {tool_name}")
+                continue
+
+            parameters_schema = tool_info.get("parameters", {})
+            if parameters_schema:
+                try:
+                    jschema.validate(instance=arguments, schema=parameters_schema)
+                except jschema.ValidationError as e:
+                    errors.append(f"工具 '{tool_name}' 参数校验失败: {e.message}")
+                    continue
+
+            validated_calls.append(tc)
+
+        return validated_calls, errors
 
 
 _chat_service: Optional[ChatService] = None

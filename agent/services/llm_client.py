@@ -41,15 +41,17 @@ class LLMClient:
         api_prefix = provider.get("api_prefix", "/v1").rstrip("/")
         return f"{base_url}{api_prefix}/chat/completions"
 
-    async def chat(
+    async def chat_completion(
         self,
         messages: list[dict],
         model: Optional[str] = None,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         tools: Optional[list[dict]] = None,
+        supports_tools: bool = True,
     ) -> dict:
-        messages = sanitize_messages(messages)
+        """非流式调用LLM（用于本地模型 stream=false + tools）"""
+        messages = sanitize_messages(messages, supports_tools=supports_tools)
         provider = self._resolve_provider(model)
         url = self._build_chat_url(provider)
         payload: dict = {
@@ -57,27 +59,31 @@ class LLMClient:
             "messages": messages,
             "max_tokens": max_tokens or provider.get("max_tokens", 2048),
             "temperature": temperature if temperature is not None else provider.get("temperature", 0.7),
+            "stream": False,
         }
-        if tools:
+        # 本地模型（LLaMA-Factory）不会用 chat_template 渲染 tools 参数，
+        # 工具格式指令已通过系统提示词注入，不需要传 tools/tool_choice 参数
+        if tools and supports_tools and provider.get("provider") != "local":
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        # 星火模型关闭联网搜索
-        if provider.get("provider") == "spark":
-            payload["search_disable"] = True
         headers = self._build_headers(provider)
+        logger.debug(f"[DEBUG] 非流式调用参数: url={url}, headers={headers}, payload={json.dumps(payload, ensure_ascii=False)}")
+
         try:
             client = await self._get_http_client()
             response = await client.post(url, json=payload, headers=headers)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.debug(f"[DEBUG] 非流式调用完整返回: {json.dumps(result, ensure_ascii=False)}")
+            return result
         except httpx.HTTPStatusError as e:
-            logger.error(f"LLM调用失败 [{provider['name']}]: {e.response.status_code} - {e.response.text}")
-            raise RuntimeError(f"LLM调用失败 [{provider['name']}]: {e.response.status_code}") from e
+            logger.error(f"LLM非流式调用失败 [{provider['name']}]: {e.response.status_code}")
+            raise RuntimeError(f"LLM非流式调用失败 [{provider['name']}]: {e.response.status_code}") from e
         except httpx.RequestError as e:
-            logger.error(f"LLM调用失败 [{provider['name']}]: {e}")
+            logger.error(f"LLM非流式调用失败 [{provider['name']}]: {e}")
             if provider.get("provider") == "local":
                 raise RuntimeError(f"本地模型 [{provider['name']}] 不可用，请确认模型服务是否已启动（{provider.get('base_url', '')}）") from e
-            raise RuntimeError(f"LLM调用失败 [{provider['name']}]: {e}") from e
+            raise RuntimeError(f"LLM非流式调用失败 [{provider['name']}]: {e}") from e
 
     async def chat_stream(
         self,
@@ -86,36 +92,48 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         tools: Optional[list[dict]] = None,
+        supports_tools: bool = True,
     ) -> AsyncGenerator[str, None]:
-        messages = sanitize_messages(messages)
+        messages = sanitize_messages(messages, supports_tools=supports_tools)
         provider = self._resolve_provider(model)
         url = self._build_chat_url(provider)
+        is_local = provider.get("provider") == "local"
         payload: dict = {
             "model": model or provider["name"],
             "messages": messages,
             "max_tokens": max_tokens or provider.get("max_tokens", 2048),
             "temperature": temperature if temperature is not None else provider.get("temperature", 0.7),
             "stream": True,
-            "stream_options": {"include_usage": True},
         }
-        if tools:
+        # 仅当模型支持function calling时才发送tools参数
+        if tools and supports_tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
         # 星火模型关闭联网搜索
         if provider.get("provider") == "spark":
             payload["search_disable"] = True
+        # 非本地模型才发送 stream_options（本地LLaMA Factory不支持）
+        if not is_local:
+            payload["stream_options"] = {"include_usage": True}
         headers = self._build_headers(provider)
+        logger.debug(f"[DEBUG] 完整调用参数: url={url}, headers={headers}, payload={json.dumps(payload, ensure_ascii=False)}")
+
         try:
             client = await self._get_http_client()
-            async with client.stream("POST", url, json=payload, headers=headers) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if line:
-                        if line.startswith("data: "):
-                            data = line[6:]
-                            if data.strip() == "[DONE]":
-                                break
-                            yield data
+            chunks = []
+            try:
+                async with client.stream("POST", url, json=payload, headers=headers) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if line:
+                            if line.startswith("data: "):
+                                data = line[6:]
+                                if data.strip() == "[DONE]":
+                                    break
+                                chunks.append(data)
+                                yield data
+            finally:
+                logger.debug(f"[DEBUG] 流式调用完整返回: {'|'.join(chunks)}")
         except httpx.HTTPStatusError as e:
             logger.error(f"LLM流式调用失败 [{provider['name']}]: {e.response.status_code}")
             raise RuntimeError(f"LLM流式调用失败 [{provider['name']}]: {e.response.status_code}") from e

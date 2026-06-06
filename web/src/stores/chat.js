@@ -1,187 +1,212 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import * as api from '../api'
+import { chatCompletionsStream, listSessions, getSession, deleteSession, listModels, listTools } from '../api'
+
+// UTC 时间戳转 UTC+8 可读字符串
+function formatTime(ts) {
+  if (!ts) return ''
+  const date = new Date(ts * 1000)
+  return date.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+}
+
+// UTC 时间戳转简短时间
+function formatShortTime(ts) {
+  if (!ts) return ''
+  const date = new Date(ts * 1000)
+  return date.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
 
 export const useChatStore = defineStore('chat', () => {
-  const conversations = ref([])
-  const currentConversationId = ref(null)
+  const sessions = ref([])
+  const currentSessionId = ref(null)
   const messages = ref([])
   const loading = ref(false)
-  const streaming = ref(false)
-  const models = ref([])
   const currentModel = ref('xop3qwen1b7')
+  const models = ref([])
   const tools = ref([])
+  const streamingContent = ref('')
+  const streaming = ref(false)
 
-  const currentConversation = computed(() =>
-    conversations.value.find((c) => c.conversation_id === currentConversationId.value)
-  )
+  const currentSession = computed(() => {
+    return sessions.value.find(s => s.id === currentSessionId.value) || null
+  })
 
-  async function loadConversations() {
+  async function loadSessionsData() {
     try {
-      const data = await api.listConversations('default')
-      conversations.value = data.conversations || []
-    } catch {
-      conversations.value = []
+      const data = await listSessions()
+      sessions.value = (data.sessions || []).map(s => ({
+        ...s,
+        display_time: formatShortTime(s.updated_time || s.created_time),
+      }))
+    } catch (err) {
+      console.error('加载会话列表失败:', err)
     }
   }
 
-  async function selectConversation(conversationId) {
-    currentConversationId.value = conversationId
-    messages.value = []
-    if (conversationId) {
-      try {
-        const data = await api.getConversation(conversationId)
-        messages.value = (data.messages || []).map((m) => ({
-          id: m.message_id,
-          role: m.role,
-          content: m.content,
-          timestamp: m.timestamp,
-        }))
-      } catch {
+  async function loadSessionData(sessionId) {
+    try {
+      const data = await getSession(sessionId)
+      currentSessionId.value = sessionId
+      messages.value = (data.messages || []).map(m => ({
+        ...m,
+        display_time: formatTime(m.created_time),
+      }))
+    } catch (err) {
+      console.error('加载会话失败:', err)
+    }
+  }
+
+  async function removeSession(sessionId) {
+    try {
+      await deleteSession(sessionId)
+      sessions.value = sessions.value.filter(s => s.id !== sessionId)
+      if (currentSessionId.value === sessionId) {
+        currentSessionId.value = null
         messages.value = []
       }
+    } catch (err) {
+      console.error('删除会话失败:', err)
     }
   }
 
-  async function sendMessage(content) {
-    if (!content.trim() || loading.value) return
+  function newSession() {
+    currentSessionId.value = null
+    messages.value = []
+  }
 
-    messages.value.push({
-      id: Date.now().toString(),
-      role: 'user',
-      content,
-      timestamp: new Date().toISOString(),
-    })
+  function selectSession(sessionId) {
+    loadSessionData(sessionId)
+  }
+
+  async function sendMessage(prompt) {
+    if (!prompt.trim() || loading.value) return
 
     loading.value = true
     streaming.value = true
+    streamingContent.value = ''
 
-    const assistantMsg = {
-      id: 'streaming_' + Date.now(),
+    // 先在本地添加用户消息
+    const userMsg = {
+      id: `temp_${Date.now()}`,
+      role: 'user',
+      content: prompt,
+      created_time: Math.floor(Date.now() / 1000),
+      display_time: formatTime(Math.floor(Date.now() / 1000)),
+    }
+    messages.value.push(userMsg)
+
+    // 添加助手消息占位
+    const assistantIdx = messages.value.length
+    messages.value.push({
+      id: `temp_assistant_${Date.now()}`,
       role: 'assistant',
       content: '',
-      timestamp: new Date().toISOString(),
-      toolCalls: [],
-      usage: {},
       isStreaming: true,
-    }
-    messages.value.push(assistantMsg)
-
-    const apiMessages = [{ role: 'user', content }]
+      created_time: Math.floor(Date.now() / 1000),
+      display_time: formatTime(Math.floor(Date.now() / 1000)),
+    })
 
     try {
-      await api.chatCompletionsStream(
-        apiMessages,
-        currentConversationId.value,
+      await chatCompletionsStream(
+        prompt,
+        currentSessionId.value || '',
         currentModel.value,
         (chunk) => {
-          if (chunk.conversation_id && !currentConversationId.value) {
-            currentConversationId.value = chunk.conversation_id
-            loadConversations()
-          }
-          if (chunk.tool_calls) {
-            const msg = messages.value.find((m) => m.id === assistantMsg.id)
-            if (msg) msg.toolCalls = chunk.tool_calls
+          if (chunk.session_id && !currentSessionId.value) {
+            currentSessionId.value = chunk.session_id
+            loadSessionsData()
           }
           if (chunk.delta && chunk.delta.content) {
-            const msg = messages.value.find((m) => m.id === assistantMsg.id)
-            if (msg) msg.content += chunk.delta.content
+            streamingContent.value += chunk.delta.content
+            messages.value[assistantIdx].content = streamingContent.value
           }
           if (chunk.content_replace) {
-            const msg = messages.value.find((m) => m.id === assistantMsg.id)
-            if (msg) msg.content = chunk.content_replace.content
+            streamingContent.value = chunk.content_replace.content
+            messages.value[assistantIdx].content = streamingContent.value
           }
-          if (chunk.finish_reason === 'stop') {
-            const msg = messages.value.find((m) => m.id === assistantMsg.id)
-            if (msg) {
-              msg.isStreaming = false
-              msg.id = chunk.id || msg.id
-            }
+          if (chunk.tool_calls) {
+            messages.value[assistantIdx].toolCalls = chunk.tool_calls
           }
         },
         () => {
-          const msg = messages.value.find((m) => m.id === assistantMsg.id)
-          if (msg) msg.isStreaming = false
-          loading.value = false
           streaming.value = false
+          loading.value = false
+          if (streamingContent.value) {
+            messages.value[assistantIdx].content = streamingContent.value
+          }
+          messages.value[assistantIdx].isStreaming = false
+          streamingContent.value = ''
+          loadSessionsData()
         },
         (error) => {
-          const msg = messages.value.find((m) => m.id === assistantMsg.id)
-          if (msg) {
-            msg.content = `请求失败: ${error}`
-            msg.isStreaming = false
-            msg.isError = true
-          }
-          loading.value = false
           streaming.value = false
+          loading.value = false
+          messages.value[assistantIdx].content = `错误: ${error}`
+          messages.value[assistantIdx].isStreaming = false
+          streamingContent.value = ''
         }
       )
     } catch (err) {
-      const msg = messages.value.find((m) => m.id === assistantMsg.id)
-      if (msg) {
-        msg.content = `请求失败: ${err.message}`
-        msg.isStreaming = false
-        msg.isError = true
-      }
-      loading.value = false
       streaming.value = false
+      loading.value = false
+      messages.value[assistantIdx].content = `请求失败: ${err.message}`
+      messages.value[assistantIdx].isStreaming = false
+      streamingContent.value = ''
     }
   }
 
-  function newConversation() {
-    currentConversationId.value = null
-    messages.value = []
-  }
-
-  async function removeConversation(conversationId) {
+  async function loadModelsData() {
     try {
-      await api.deleteConversation(conversationId)
-      if (currentConversationId.value === conversationId) {
-        newConversation()
-      }
-      await loadConversations()
-    } catch {
-      //
-    }
-  }
-
-  async function loadModels() {
-    try {
-      const data = await api.listModels()
+      const data = await listModels()
       models.value = data.models || []
-      if (models.value.length > 0 && !models.value.find(m => m.id === currentModel.value)) {
-        currentModel.value = models.value[0].id
-      }
-    } catch {
-      models.value = [{ id: 'Arch-Agent-3B', name: 'Arch-Agent-3B' }]
+    } catch (err) {
+      console.error('加载模型列表失败:', err)
     }
   }
 
-  async function loadTools() {
+  async function loadToolsData() {
     try {
-      const data = await api.listTools()
+      const data = await listTools()
       tools.value = data.tools || []
-    } catch {
-      tools.value = []
+    } catch (err) {
+      console.error('加载工具列表失败:', err)
     }
   }
 
   return {
-    conversations,
-    currentConversationId,
+    sessions,
+    currentSessionId,
     messages,
     loading,
-    streaming,
-    models,
     currentModel,
+    models,
     tools,
-    currentConversation,
-    loadConversations,
-    selectConversation,
+    streamingContent,
+    streaming,
+    currentSession,
+    loadSessions: loadSessionsData,
+    loadSession: loadSessionData,
+    removeSession,
+    newSession,
+    selectSession,
     sendMessage,
-    newConversation,
-    removeConversation,
-    loadModels,
-    loadTools,
+    loadModels: loadModelsData,
+    loadTools: loadToolsData,
   }
 })

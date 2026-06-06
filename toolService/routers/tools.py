@@ -1,11 +1,11 @@
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from toolservice.models.schemas import (
     ToolCallRequest,
     ToolCallResponse,
     ToolListResponse,
     ToolMetadata,
-    ErrorResponse,
 )
 from toolservice.services.tool_registry import get_tool_registry
 
@@ -30,12 +30,15 @@ async def list_tools():
     )
 
 
-@router.get("/tools/{name}", response_model=ToolMetadata)
+@router.get("/tools/{name}")
 async def get_tool(name: str):
     registry = get_tool_registry()
     tool = registry.get_tool(name)
     if not tool:
-        raise HTTPException(status_code=404, detail=f"工具不存在: {name}")
+        return JSONResponse(
+            status_code=404,
+            content={"error": {"code": "tool_not_found", "message": f"工具不存在: {name}"}},
+        )
     return ToolMetadata(
         name=tool.name,
         description=tool.description,

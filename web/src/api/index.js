@@ -6,16 +6,8 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-export async function chatCompletions(messages, conversationId = null, model = 'xop3qwen1b7') {
-  const payload = { model, messages, stream: false, max_tokens: 2048 }
-  if (conversationId) payload.conversation_id = conversationId
-  const { data } = await api.post('/chat/completions', payload)
-  return data
-}
-
-export async function chatCompletionsStream(messages, conversationId = null, model = 'xop3qwen1b7', onChunk = () => {}, onDone = () => {}, onError = () => {}) {
-  const payload = { model, messages, stream: true, max_tokens: 2048 }
-  if (conversationId) payload.conversation_id = conversationId
+export async function chatCompletionsStream(prompt, sessionId = '', model = 'xop3qwen1b7', onChunk = () => {}, onDone = () => {}, onError = () => {}) {
+  const payload = { session_id: sessionId, model, prompt, stream: true }
 
   try {
     const response = await fetch('/v1/chat/completions', {
@@ -69,18 +61,18 @@ export async function chatCompletionsStream(messages, conversationId = null, mod
   }
 }
 
-export async function listConversations(userId = 'default', limit = 20, offset = 0) {
-  const { data } = await api.get('/conversations', { params: { user_id: userId, limit, offset } })
+export async function listSessions(limit = 20, offset = 0) {
+  const { data } = await api.get('/sessions', { params: { limit, offset } })
   return data
 }
 
-export async function getConversation(conversationId) {
-  const { data } = await api.get(`/conversations/${conversationId}`)
+export async function getSession(sessionId) {
+  const { data } = await api.get(`/sessions/${sessionId}`)
   return data
 }
 
-export async function deleteConversation(conversationId) {
-  await api.delete(`/conversations/${conversationId}`)
+export async function deleteSession(sessionId) {
+  await api.delete(`/sessions/${sessionId}`)
 }
 
 export async function listModels() {
@@ -90,10 +82,5 @@ export async function listModels() {
 
 export async function listTools() {
   const { data } = await api.get('/tools')
-  return data
-}
-
-export async function scoreEvaluation(model, prompt, response, criteria = ['相关性', '准确性', '完整性']) {
-  const { data } = await api.post('/score/evaluation', { model, prompt, response, criteria })
   return data
 }

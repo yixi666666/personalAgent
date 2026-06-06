@@ -6,13 +6,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from agent.models.chat import (
-    ChatRequest,
-    ChatResponse,
-    ChatChoice,
-    ChatChoiceMessage,
-    UsageInfo,
-)
+from agent.models.chat import ChatRequest
 from agent.services.chat_service import get_chat_service
 
 logger = logging.getLogger(__name__)
@@ -25,23 +19,24 @@ async def _stream_chat_generator(request: ChatRequest):
     chat_service = get_chat_service()
 
     try:
-        conversation_id, llm_messages = await chat_service.prepare_conversation(
-            conversation_id=request.conversation_id,
-            messages=[m.model_dump() for m in request.messages],
+        session_id, llm_messages, user_msg_id = await chat_service.prepare_session(
+            session_id=request.session_id,
+            prompt=request.prompt,
             model=request.model,
         )
     except ValueError as e:
         yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
         return
 
-    yield f"data: {json.dumps({'conversation_id': conversation_id}, ensure_ascii=False)}\n\n"
+    yield f"data: {json.dumps({'session_id': session_id}, ensure_ascii=False)}\n\n"
 
     async for event in chat_service.stream_chat(
         messages=llm_messages,
         model=request.model,
         max_tokens=request.max_tokens,
         temperature=request.temperature,
-        conversation_id=conversation_id,
+        session_id=session_id,
+        parent_id=user_msg_id,
     ):
         event_type = event.get("type")
 
@@ -64,60 +59,13 @@ async def _stream_chat_generator(request: ChatRequest):
 
 @router.post("/chat/completions")
 async def chat_completions(request: ChatRequest):
-    if request.stream:
-        return StreamingResponse(
-            _stream_chat_generator(request),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    chat_service = get_chat_service()
-
-    try:
-        conversation_id, llm_messages = await chat_service.prepare_conversation(
-            conversation_id=request.conversation_id,
-            messages=[m.model_dump() for m in request.messages],
-            model=request.model,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-    try:
-        result = await chat_service.chat(
-            messages=llm_messages,
-            model=request.model,
-            max_tokens=request.max_tokens,
-            temperature=request.temperature,
-            conversation_id=conversation_id,
-        )
-    except Exception as e:
-        logger.error(f"对话处理失败: {e}")
-        raise HTTPException(status_code=500, detail=f"对话处理失败: {e}")
-
-    usage_data = result.get("usage", {})
-
-    return ChatResponse(
-        id=f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        created=int(time.time()),
-        model=request.model,
-        conversation_id=conversation_id,
-        choices=[
-            ChatChoice(
-                index=0,
-                message=ChatChoiceMessage(
-                    role="assistant",
-                    content=result["content"],
-                ),
-                finish_reason="stop",
-            )
-        ],
-        usage=UsageInfo(
-            prompt_tokens=usage_data.get("prompt_tokens", 0),
-            completion_tokens=usage_data.get("completion_tokens", 0),
-            total_tokens=usage_data.get("total_tokens", 0),
-        ),
+    """流式对话接口，强制 stream=True"""
+    return StreamingResponse(
+        _stream_chat_generator(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )

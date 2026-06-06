@@ -1,36 +1,39 @@
 <template>
   <div class="sidebar">
     <div class="sidebar-header">
-      <el-button type="primary" class="new-chat-btn" @click="chatStore.newConversation()">
+      <el-button type="primary" class="new-chat-btn" @click="chatStore.newSession()">
         <el-icon><Plus /></el-icon>
         <span>新建会话</span>
       </el-button>
     </div>
 
-    <div class="conversation-list scrollable">
+    <div class="session-list scrollable">
       <div
-        v-for="conv in chatStore.conversations"
-        :key="conv.conversation_id"
-        class="conversation-item"
-        :class="{ active: conv.conversation_id === chatStore.currentConversationId }"
-        @click="chatStore.selectConversation(conv.conversation_id)"
+        v-for="s in chatStore.sessions"
+        :key="s.id"
+        class="session-item"
+        :class="{ active: s.id === chatStore.currentSessionId }"
+        @click="chatStore.selectSession(s.id)"
       >
-        <el-icon class="conv-icon"><ChatDotRound /></el-icon>
-        <div class="conv-info">
-          <div class="conv-title">会话 {{ conv.conversation_id.slice(0, 8) }}</div>
-          <div class="conv-meta">{{ conv.message_count }} 条消息</div>
+        <el-icon class="session-icon"><ChatDotRound /></el-icon>
+        <div class="session-info">
+          <div class="session-title">{{ s.title || '会话 ' + s.id.slice(0, 8) }}</div>
+          <div class="session-meta">
+            <span>{{ s.message_count }} 条消息</span>
+            <span v-if="s.display_time" class="session-time">{{ s.display_time }}</span>
+          </div>
         </div>
         <el-button
           class="delete-btn"
           type="danger"
           text
           size="small"
-          @click.stop="chatStore.removeConversation(conv.conversation_id)"
+          @click.stop="chatStore.removeSession(s.id)"
         >
           <el-icon><Delete /></el-icon>
         </el-button>
       </div>
-      <el-empty v-if="chatStore.conversations.length === 0" description="暂无会话" :image-size="60" />
+      <el-empty v-if="chatStore.sessions.length === 0" description="暂无会话" :image-size="60" />
     </div>
 
     <div class="sidebar-footer">
@@ -76,14 +79,14 @@ const chatStore = useChatStore()
   width: 100%;
 }
 
-.conversation-list {
+.session-list {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden !important;
   padding: 0 8px;
 }
 
-.conversation-item {
+.session-item {
   display: flex;
   align-items: center;
   padding: 10px 12px;
@@ -93,27 +96,27 @@ const chatStore = useChatStore()
   transition: background 0.2s;
 }
 
-.conversation-item:hover {
+.session-item:hover {
   background: #e8eaed;
 }
 
-.conversation-item.active {
+.session-item.active {
   background: #d9ecff;
 }
 
-.conv-icon {
+.session-icon {
   font-size: 18px;
   color: #409eff;
   margin-right: 10px;
   flex-shrink: 0;
 }
 
-.conv-info {
+.session-info {
   flex: 1;
   min-width: 0;
 }
 
-.conv-title {
+.session-title {
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
@@ -121,10 +124,17 @@ const chatStore = useChatStore()
   text-overflow: ellipsis;
 }
 
-.conv-meta {
+.session-meta {
   font-size: 11px;
   color: #909399;
   margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-time {
+  color: #c0c4cc;
 }
 
 .delete-btn {
@@ -133,7 +143,7 @@ const chatStore = useChatStore()
   flex-shrink: 0;
 }
 
-.conversation-item:hover .delete-btn {
+.session-item:hover .delete-btn {
   opacity: 1;
 }
 
