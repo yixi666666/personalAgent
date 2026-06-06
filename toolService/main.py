@@ -10,10 +10,25 @@ from toolservice.services.tool_registry import get_tool_registry
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = get_config()
-    logging.basicConfig(
-        level=getattr(logging, config.log_level, logging.INFO),
-        format=config.log_format,
-    )
+    log_level = getattr(logging, config.log_level, logging.INFO)
+    log_formatter = logging.Formatter(config.log_format)
+
+    # 直接设置 root logger 级别和 handler（basicConfig 在 uvicorn 已配置后无效）
+    # uvicorn 只在 uvicorn/uvicorn.access logger 上加 handler，root logger 没有 handler
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    if not root_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(log_formatter)
+        handler.setLevel(log_level)
+        root_logger.addHandler(handler)
+    else:
+        for handler in root_logger.handlers:
+            handler.setFormatter(log_formatter)
+            handler.setLevel(log_level)
+
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     logger = logging.getLogger(__name__)
 
     logger.info("正在初始化工具注册表...")
@@ -60,5 +75,5 @@ def root():
 
 
 @app.get("/health")
-def health_check():
+async def health_check():
     return {"status": "healthy"}

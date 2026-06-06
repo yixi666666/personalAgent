@@ -80,7 +80,12 @@ class ToolManager:
                 logger.warning(f"定时刷新工具列表失败: {e}")
 
     async def get_tool_schemas_for_llm(self) -> list[dict]:
-        """返回格式化后的工具列表，用于发送给大模型"""
+        """返回格式化后的工具列表，用于发送给大模型
+
+        如果缓存为空，先尝试刷新一次
+        """
+        if not self._tools:
+            await self.refresh_tools()
         schemas = []
         for name, tool_info in self._tools.items():
             schema = {

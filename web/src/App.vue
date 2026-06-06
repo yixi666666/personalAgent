@@ -1,20 +1,20 @@
 <template>
   <div class="app-container">
-    <ConversationList class="app-sidebar" />
+    <SessionList class="app-sidebar" />
     <ChatArea class="app-main" />
   </div>
 </template>
 
 <script setup>
 import { onMounted } from 'vue'
-import ConversationList from './components/ConversationList.vue'
+import SessionList from './components/SessionList.vue'
 import ChatArea from './components/ChatArea.vue'
 import { useChatStore } from './stores/chat'
 
 const chatStore = useChatStore()
 
 onMounted(() => {
-  chatStore.loadConversations()
+  chatStore.loadSessions()
   chatStore.loadModels()
   chatStore.loadTools()
 })

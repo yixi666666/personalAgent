@@ -43,6 +43,10 @@ class Config:
     @property
     def database_path(self) -> str:
         path = self.database.get("path", "./data/chatAgent.sqlite")
+        # 基于项目根目录解析，确保数据库存放在 personalAgent/data/ 下
+        if not os.path.isabs(path):
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            path = os.path.join(project_root, path)
         db_dir = os.path.dirname(path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
@@ -103,10 +107,13 @@ class Config:
         return result
 
     def resolve_model_provider(self, model_name: str) -> dict:
-        for mp in self.get_all_model_providers():
+        providers = self.get_all_model_providers()
+        for mp in providers:
             if mp["name"] == model_name:
                 return mp
-        return self.get_all_model_providers()[0]
+        if providers:
+            return providers[0]
+        raise ValueError(f"未找到模型提供者: {model_name}，且无默认提供者可用")
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, default)

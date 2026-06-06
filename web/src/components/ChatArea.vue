@@ -2,8 +2,8 @@
   <div class="chat-area">
     <div class="chat-header">
       <span class="chat-title">
-        {{ chatStore.currentConversationId
-          ? '会话 ' + chatStore.currentConversationId.slice(0, 8)
+        {{ chatStore.currentSessionId
+          ? (chatStore.currentSession?.title || '会话 ' + chatStore.currentSessionId.slice(0, 8))
           : '新对话' }}
       </span>
       <el-tag size="small" type="info">{{ chatStore.currentModel }}</el-tag>
@@ -27,7 +27,10 @@
           </el-avatar>
         </div>
         <div class="message-body">
-          <div class="message-role">{{ msg.role === 'user' ? '我' : '助手' }}</div>
+          <div class="message-meta">
+            <span class="message-role">{{ msg.role === 'user' ? '我' : '助手' }}</span>
+            <span v-if="msg.display_time" class="message-time">{{ msg.display_time }}</span>
+          </div>
           <div class="message-content" :class="{ error: msg.isError }">
             <pre class="content-text">{{ msg.content }}</pre>
             <span v-if="msg.isStreaming" class="streaming-cursor"></span>
@@ -36,11 +39,8 @@
             <el-collapse>
               <el-collapse-item title="🔧 工具调用">
                 <div v-for="(tc, idx) in msg.toolCalls" :key="idx" class="tool-call-item">
-                  <el-tag size="small" type="warning">{{ tc.tool_name }}</el-tag>
-                  <span class="tool-args">{{ JSON.stringify(tc.tool_args) }}</span>
-                  <div v-if="tc.result" class="tool-result">
-                    <strong>结果：</strong>{{ tc.result }}
-                  </div>
+                  <el-tag size="small" type="warning">{{ tc.function?.name || tc.id }}</el-tag>
+                  <span class="tool-args">{{ tc.function?.arguments }}</span>
                 </div>
               </el-collapse-item>
             </el-collapse>
@@ -229,10 +229,21 @@ function handleSend() {
   text-align: right;
 }
 
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
 .message-role {
   font-size: 12px;
   color: #909399;
-  margin-bottom: 4px;
+}
+
+.message-time {
+  font-size: 11px;
+  color: #c0c4cc;
 }
 
 .message-content {
