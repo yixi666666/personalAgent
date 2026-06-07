@@ -50,8 +50,8 @@ class SessionManager:
             "id": session_id,
             "title": title,
             "status": "active",
-            "created_time": now,
-            "updated_time": now,
+            "created_time": _format_display_time(now),
+            "updated_time": _format_display_time(now),
         }
 
     def add_message(
@@ -70,7 +70,8 @@ class SessionManager:
         )
         db.commit()
         return MessageItem(
-            id=msg_id, parent_id=parent_id, role=role, content=content, created_time=now, updated_time=now
+            id=msg_id, parent_id=parent_id, role=role, content=content,
+            created_time=_format_display_time(now), updated_time=_format_display_time(now)
         )
 
     def update_message(self, message_id: str, content: str) -> bool:
@@ -103,23 +104,58 @@ class SessionManager:
             "SELECT * FROM messages WHERE session_id = ? ORDER BY created_time",
             (session_id,),
         ).fetchall()
-        messages = [
-            MessageItem(
+        messages = []
+        for row in msg_rows:
+            msg_item = MessageItem(
                 id=row["id"],
                 parent_id=row["parent_id"],
                 role=row["role"],
                 content=row["content"],
-                created_time=row["created_time"],
-                updated_time=row["updated_time"],
+                created_time=_format_display_time(row["created_time"]),
+                updated_time=_format_display_time(row["updated_time"]),
             )
-            for row in msg_rows
-        ]
+            # assistant消息：关联查询tool_calls
+            if row["role"] == "assistant":
+                tc_rows = db.execute(
+                    "SELECT call_id, tool_name, parameters, result, status FROM tool_calls WHERE message_id = ? ORDER BY created_time",
+                    (row["id"],),
+                ).fetchall()
+                if tc_rows:
+                    msg_item.tool_calls = [
+                        {
+                            "id": tc["call_id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["tool_name"],
+                                "arguments": tc["parameters"],
+                            },
+                            "result": tc["result"],
+                            "status": tc["status"],
+                        }
+                        for tc in tc_rows
+                    ]
+            # tool消息：添加tool_call_id和name
+            if row["role"] == "tool" and row["parent_id"]:
+                tc_row = db.execute(
+                    "SELECT call_id, tool_name FROM tool_calls WHERE message_id = ? ORDER BY created_time",
+                    (row["parent_id"],),
+                ).fetchall()
+                parent_tool_msgs = db.execute(
+                    "SELECT id FROM messages WHERE parent_id = ? AND role = 'tool' ORDER BY created_time",
+                    (row["parent_id"],),
+                ).fetchall()
+                for idx, tm in enumerate(parent_tool_msgs):
+                    if tm["id"] == row["id"] and idx < len(tc_row):
+                        msg_item.tool_call_id = tc_row[idx]["call_id"]
+                        msg_item.name = tc_row[idx]["tool_name"]
+                        break
+            messages.append(msg_item)
         return SessionDetailResponse(
             id=session_row["id"],
             title=session_row["title"],
             status=session_row["status"],
-            created_time=session_row["created_time"],
-            updated_time=session_row["updated_time"],
+            created_time=_format_display_time(session_row["created_time"]),
+            updated_time=_format_display_time(session_row["updated_time"]),
             messages=messages,
         )
 
@@ -141,8 +177,8 @@ class SessionManager:
                 id=row["id"],
                 title=row["title"],
                 status=row["status"],
-                created_time=row["created_time"],
-                updated_time=row["updated_time"],
+                created_time=_format_display_time(row["created_time"]),
+                updated_time=_format_display_time(row["updated_time"]),
                 message_count=row["message_count"],
             )
             for row in rows

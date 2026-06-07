@@ -2,36 +2,6 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { chatCompletionsStream, listSessions, getSession, deleteSession, listModels, listTools } from '../api'
 
-// UTC 时间戳转 UTC+8 可读字符串
-function formatTime(ts) {
-  if (!ts) return ''
-  const date = new Date(ts * 1000)
-  return date.toLocaleString('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  })
-}
-
-// UTC 时间戳转简短时间
-function formatShortTime(ts) {
-  if (!ts) return ''
-  const date = new Date(ts * 1000)
-  return date.toLocaleString('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
-}
-
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref([])
   const currentSessionId = ref(null)
@@ -52,7 +22,7 @@ export const useChatStore = defineStore('chat', () => {
       const data = await listSessions()
       sessions.value = (data.sessions || []).map(s => ({
         ...s,
-        display_time: formatShortTime(s.updated_time || s.created_time),
+        display_time: s.updated_time || s.created_time || '',
       }))
     } catch (err) {
       console.error('加载会话列表失败:', err)
@@ -63,10 +33,76 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const data = await getSession(sessionId)
       currentSessionId.value = sessionId
-      messages.value = (data.messages || []).map(m => ({
-        ...m,
-        display_time: formatTime(m.created_time),
-      }))
+      // 处理历史消息：将 role=tool 消息合并到对应 assistant 消息中
+      const rawMessages = data.messages || []
+      const processed = []
+      const toolMsgMap = {} // call_id -> tool消息content
+
+      // 第一遍：收集所有 tool 消息，按 tool_call_id 索引
+      for (const m of rawMessages) {
+        if (m.role === 'tool' && m.tool_call_id) {
+          toolMsgMap[m.tool_call_id] = m.content
+        }
+      }
+
+      // 第二遍：构建显示用的消息列表，将工具调用合并到下一条assistant文本回复中
+      let pendingToolCalls = null
+
+      for (const m of rawMessages) {
+        if (m.role === 'tool') {
+          // tool 消息不单独显示，已合并到 assistant 消息中
+          continue
+        }
+
+        const msg = {
+          ...m,
+          display_time: m.created_time || '',
+        }
+
+        // assistant 消息：转换 tool_calls 字段名并附加工具结果
+        if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+          const toolCalls = m.tool_calls.map(tc => ({
+            ...tc,
+            result: toolMsgMap[tc.id] || null,
+          }))
+
+          // 有工具调用时，content 通常是原始工具调用标签文本，不应显示
+          if (m.content && (m.content.includes('<tool_call') || m.content.includes('tool_calls'))) {
+            msg.content = ''
+          }
+
+          if (msg.content && msg.content.trim()) {
+            // 有文本内容：直接附加工具调用到当前消息
+            msg.toolCalls = toolCalls
+            pendingToolCalls = null
+          } else {
+            // 无文本内容：暂存工具调用，等下一条assistant文本回复消息
+            pendingToolCalls = toolCalls
+            continue // 不单独显示这条消息
+          }
+        }
+
+        // assistant文本回复消息：如果有暂存的工具调用，附加到这条消息
+        if (m.role === 'assistant' && pendingToolCalls) {
+          msg.toolCalls = pendingToolCalls
+          pendingToolCalls = null
+        }
+
+        processed.push(msg)
+      }
+
+      // 如果最后还有未合并的工具调用（没有后续文本回复），单独显示
+      if (pendingToolCalls) {
+        processed.push({
+          id: `pending_tc_${Date.now()}`,
+          role: 'assistant',
+          content: '',
+          toolCalls: pendingToolCalls,
+          display_time: '',
+        })
+      }
+
+      messages.value = processed
     } catch (err) {
       console.error('加载会话失败:', err)
     }
@@ -102,12 +138,16 @@ export const useChatStore = defineStore('chat', () => {
     streamingContent.value = ''
 
     // 先在本地添加用户消息
+    const now = new Date()
+    const displayTime = now.toLocaleString('zh-CN', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    })
     const userMsg = {
       id: `temp_${Date.now()}`,
       role: 'user',
       content: prompt,
-      created_time: Math.floor(Date.now() / 1000),
-      display_time: formatTime(Math.floor(Date.now() / 1000)),
+      display_time: displayTime,
     }
     messages.value.push(userMsg)
 
@@ -118,9 +158,11 @@ export const useChatStore = defineStore('chat', () => {
       role: 'assistant',
       content: '',
       isStreaming: true,
-      created_time: Math.floor(Date.now() / 1000),
-      display_time: formatTime(Math.floor(Date.now() / 1000)),
+      display_time: displayTime,
     })
+
+    // 暂存工具调用信息，等最终文本回复时附加
+    let pendingStreamToolCalls = null
 
     try {
       await chatCompletionsStream(
@@ -141,7 +183,18 @@ export const useChatStore = defineStore('chat', () => {
             messages.value[assistantIdx].content = streamingContent.value
           }
           if (chunk.tool_calls) {
-            messages.value[assistantIdx].toolCalls = chunk.tool_calls
+            // 暂存工具调用，不立即显示
+            pendingStreamToolCalls = chunk.tool_calls
+          }
+          if (chunk.tool_results && pendingStreamToolCalls) {
+            // 将工具执行结果附加到暂存的 toolCall 上
+            for (const tr of chunk.tool_results) {
+              const tc = pendingStreamToolCalls.find(c => c.id === tr.id)
+              if (tc) {
+                tc.result = tr.result
+                tc.status = tr.status
+              }
+            }
           }
         },
         () => {
@@ -149,6 +202,11 @@ export const useChatStore = defineStore('chat', () => {
           loading.value = false
           if (streamingContent.value) {
             messages.value[assistantIdx].content = streamingContent.value
+          }
+          // 将暂存的工具调用附加到最终消息
+          if (pendingStreamToolCalls) {
+            messages.value[assistantIdx].toolCalls = pendingStreamToolCalls
+            pendingStreamToolCalls = null
           }
           messages.value[assistantIdx].isStreaming = false
           streamingContent.value = ''
@@ -158,6 +216,11 @@ export const useChatStore = defineStore('chat', () => {
           streaming.value = false
           loading.value = false
           messages.value[assistantIdx].content = `错误: ${error}`
+          // 即使出错也附加工具调用
+          if (pendingStreamToolCalls) {
+            messages.value[assistantIdx].toolCalls = pendingStreamToolCalls
+            pendingStreamToolCalls = null
+          }
           messages.value[assistantIdx].isStreaming = false
           streamingContent.value = ''
         }

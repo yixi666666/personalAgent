@@ -31,16 +31,20 @@
             <span class="message-role">{{ msg.role === 'user' ? '我' : '助手' }}</span>
             <span v-if="msg.display_time" class="message-time">{{ msg.display_time }}</span>
           </div>
-          <div class="message-content" :class="{ error: msg.isError }">
+          <div v-if="msg.content || msg.isStreaming" class="message-content" :class="{ error: msg.isError }">
             <pre class="content-text">{{ msg.content }}</pre>
             <span v-if="msg.isStreaming" class="streaming-cursor"></span>
           </div>
           <div v-if="msg.toolCalls && msg.toolCalls.length > 0" class="tool-calls">
             <el-collapse>
-              <el-collapse-item title="🔧 工具调用">
+              <el-collapse-item>
+                <template #title>
+                  <span class="tool-calls-title">🔧 工具调用 ({{ msg.toolCalls.length }})</span>
+                </template>
                 <div v-for="(tc, idx) in msg.toolCalls" :key="idx" class="tool-call-item">
-                  <el-tag size="small" type="warning">{{ tc.function?.name || tc.id }}</el-tag>
-                  <span class="tool-args">{{ tc.function?.arguments }}</span>
+                  <span class="tool-call-name"><span class="tool-label-name">名称:</span>{{ tc.function?.name || tc.id }}</span>
+                  <span v-if="tc.result" class="tool-call-result-inline" :title="tc.result"><span class="tool-label-result">结果:</span>{{ truncateText(tc.result, 60) }}</span>
+                  <span class="tool-call-args-inline" :title="tc.function?.arguments"><span class="tool-label-args">参数:</span>{{ truncateText(tc.function?.arguments, 60) }}</span>
                 </div>
               </el-collapse-item>
             </el-collapse>
@@ -97,6 +101,19 @@ const messageListRef = ref(null)
 const inputRef = ref(null)
 
 const messages = computed(() => chatStore.messages)
+
+function truncateText(text, maxLen = 120) {
+  if (!text) return ''
+  // 尝试格式化 JSON
+  try {
+    const parsed = JSON.parse(text)
+    text = JSON.stringify(parsed, null, 2)
+  } catch {
+    // 非 JSON，保持原样
+  }
+  if (text.length <= maxLen) return text
+  return text.slice(0, maxLen) + '...'
+}
 
 function avatarStyle(role) {
   return role === 'user'
@@ -326,22 +343,77 @@ function handleSend() {
   margin-top: 8px;
 }
 
-.tool-call-item {
-  margin-bottom: 8px;
+.tool-calls-title {
   font-size: 13px;
+  color: #606266;
 }
 
-.tool-args {
-  color: #606266;
-  margin-left: 6px;
+.tool-call-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 6px 8px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px solid #ebeef5;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+
+.tool-label-name,
+.tool-label-args,
+.tool-label-result {
+  font-size: 11px;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.tool-label-name {
+  color: #e6a23c;
+}
+
+.tool-label-args {
+  color: #409eff;
+}
+
+.tool-label-result {
+  color: #67c23a;
+}
+
+.tool-call-name {
+  color: #e6a23c;
+  font-weight: 600;
+  font-size: 12px;
+  flex: 2;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-call-args-inline {
+  color: #409eff;
   font-family: monospace;
   font-size: 12px;
+  flex: 2;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
 }
 
-.tool-result {
-  margin-top: 4px;
+.tool-call-result-inline {
   color: #67c23a;
+  font-family: monospace;
   font-size: 12px;
+  flex: 6;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
 }
 
 .chat-input {

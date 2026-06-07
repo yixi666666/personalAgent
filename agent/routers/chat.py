@@ -49,6 +49,9 @@ async def _stream_chat_generator(request: ChatRequest):
         elif event_type == "tool_calls":
             yield f"data: {json.dumps({'tool_calls': event['tool_calls']}, ensure_ascii=False)}\n\n"
 
+        elif event_type == "tool_results":
+            yield f"data: {json.dumps({'tool_results': event['tool_results']}, ensure_ascii=False)}\n\n"
+
         elif event_type == "error":
             yield f"data: {json.dumps({'error': event['error']}, ensure_ascii=False)}\n\n"
 
