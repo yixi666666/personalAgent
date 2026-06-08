@@ -31,6 +31,16 @@
             <span class="message-role">{{ msg.role === 'user' ? '我' : '助手' }}</span>
             <span v-if="msg.display_time" class="message-time">{{ msg.display_time }}</span>
           </div>
+          <div v-if="msg.reasoningContent" class="reasoning-section">
+            <el-collapse>
+              <el-collapse-item>
+                <template #title>
+                  <span class="reasoning-title">💭 深度思考</span>
+                </template>
+                <pre class="reasoning-text">{{ msg.reasoningContent }}</pre>
+              </el-collapse-item>
+            </el-collapse>
+          </div>
           <div v-if="msg.content || msg.isStreaming" class="message-content" :class="{ error: msg.isError }">
             <pre class="content-text">{{ msg.content }}</pre>
             <span v-if="msg.isStreaming" class="streaming-cursor"></span>
@@ -341,6 +351,30 @@ function handleSend() {
 
 .tool-calls {
   margin-top: 8px;
+}
+
+.reasoning-section {
+  margin-bottom: 8px;
+}
+
+.reasoning-title {
+  font-size: 13px;
+  color: #8b5cf6;
+  font-weight: 500;
+}
+
+.reasoning-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #6b7280;
+  background: #f9fafb;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid #8b5cf6;
 }
 
 .tool-calls-title {

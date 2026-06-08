@@ -48,15 +48,29 @@
           />
         </el-select>
       </div>
+      <div v-if="isDeepSeekModel" class="deep-thinking-toggle">
+        <span class="toggle-label">深度思考</span>
+        <el-switch
+          v-model="chatStore.deepThinking"
+          size="small"
+          active-text="开"
+          inactive-text="关"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { Plus, Delete, ChatDotRound } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 
 const chatStore = useChatStore()
+
+const isDeepSeekModel = computed(() => {
+  return chatStore.currentModel.startsWith('deepseek')
+})
 </script>
 
 <style scoped>
@@ -162,5 +176,17 @@ const chatStore = useChatStore()
   font-size: 12px;
   color: #606266;
   white-space: nowrap;
+}
+
+.deep-thinking-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.toggle-label {
+  font-size: 12px;
+  color: #606266;
 }
 </style>

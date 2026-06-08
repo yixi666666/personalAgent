@@ -11,7 +11,9 @@ export const useChatStore = defineStore('chat', () => {
   const models = ref([])
   const tools = ref([])
   const streamingContent = ref('')
+  const streamingReasoning = ref('')
   const streaming = ref(false)
+  const deepThinking = ref(false)
 
   const currentSession = computed(() => {
     return sessions.value.find(s => s.id === currentSessionId.value) || null
@@ -136,6 +138,7 @@ export const useChatStore = defineStore('chat', () => {
     loading.value = true
     streaming.value = true
     streamingContent.value = ''
+    streamingReasoning.value = ''
 
     // 先在本地添加用户消息
     const now = new Date()
@@ -157,6 +160,7 @@ export const useChatStore = defineStore('chat', () => {
       id: `temp_assistant_${Date.now()}`,
       role: 'assistant',
       content: '',
+      reasoningContent: '',
       isStreaming: true,
       display_time: displayTime,
     })
@@ -169,10 +173,15 @@ export const useChatStore = defineStore('chat', () => {
         prompt,
         currentSessionId.value || '',
         currentModel.value,
+        deepThinking.value,
         (chunk) => {
           if (chunk.session_id && !currentSessionId.value) {
             currentSessionId.value = chunk.session_id
             loadSessionsData()
+          }
+          if (chunk.reasoning_delta && chunk.reasoning_delta.content) {
+            streamingReasoning.value += chunk.reasoning_delta.content
+            messages.value[assistantIdx].reasoningContent = streamingReasoning.value
           }
           if (chunk.delta && chunk.delta.content) {
             streamingContent.value += chunk.delta.content
@@ -203,6 +212,9 @@ export const useChatStore = defineStore('chat', () => {
           if (streamingContent.value) {
             messages.value[assistantIdx].content = streamingContent.value
           }
+          if (streamingReasoning.value) {
+            messages.value[assistantIdx].reasoningContent = streamingReasoning.value
+          }
           // 将暂存的工具调用附加到最终消息
           if (pendingStreamToolCalls) {
             messages.value[assistantIdx].toolCalls = pendingStreamToolCalls
@@ -210,6 +222,7 @@ export const useChatStore = defineStore('chat', () => {
           }
           messages.value[assistantIdx].isStreaming = false
           streamingContent.value = ''
+          streamingReasoning.value = ''
           loadSessionsData()
         },
         (error) => {
@@ -223,6 +236,7 @@ export const useChatStore = defineStore('chat', () => {
           }
           messages.value[assistantIdx].isStreaming = false
           streamingContent.value = ''
+          streamingReasoning.value = ''
         }
       )
     } catch (err) {
@@ -231,6 +245,7 @@ export const useChatStore = defineStore('chat', () => {
       messages.value[assistantIdx].content = `请求失败: ${err.message}`
       messages.value[assistantIdx].isStreaming = false
       streamingContent.value = ''
+      streamingReasoning.value = ''
     }
   }
 
@@ -261,7 +276,9 @@ export const useChatStore = defineStore('chat', () => {
     models,
     tools,
     streamingContent,
+    streamingReasoning,
     streaming,
+    deepThinking,
     currentSession,
     loadSessions: loadSessionsData,
     loadSession: loadSessionData,

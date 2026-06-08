@@ -41,13 +41,18 @@ class LLMClient:
         target_model = model or self.default_model
         return config.resolve_model_provider(target_model)
 
-    def _build_extra_body(self, provider: dict, stream: bool) -> dict:
-        """构建 extra_body：星火模型关闭联网搜索，非本地模型流式时包含 stream_options"""
+    def _build_extra_body(self, provider: dict, stream: bool, deep_thinking: bool = False) -> dict:
+        """构建 extra_body：星火模型关闭联网搜索，非本地模型流式时包含 stream_options，DeepSeek 思考模式"""
         extra: dict = {}
         if provider.get("provider") == "spark":
             extra["search_disable"] = True
         if stream and provider.get("provider") != "local":
             extra["stream_options"] = {"include_usage": True}
+        if provider.get("provider") == "deepseek":
+            if deep_thinking:
+                extra["thinking"] = {"type": "enabled"}
+            else:
+                extra["thinking"] = {"type": "disabled"}
         return extra or None
 
     async def chat_completion(
@@ -58,6 +63,7 @@ class LLMClient:
         temperature: Optional[float] = None,
         tools: Optional[list[dict]] = None,
         supports_tools: bool = True,
+        deep_thinking: bool = False,
     ) -> dict:
         """非流式调用LLM（用于本地模型 stream=false + tools）"""
         messages = sanitize_messages(messages, supports_tools=supports_tools)
@@ -77,7 +83,7 @@ class LLMClient:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
-        extra_body = self._build_extra_body(provider, stream=False)
+        extra_body = self._build_extra_body(provider, stream=False, deep_thinking=deep_thinking)
         if extra_body:
             kwargs["extra_body"] = extra_body
 
@@ -105,6 +111,7 @@ class LLMClient:
         temperature: Optional[float] = None,
         tools: Optional[list[dict]] = None,
         supports_tools: bool = True,
+        deep_thinking: bool = False,
     ) -> AsyncGenerator[dict, None]:
         """流式调用LLM，yield SDK 解析后的 chunk dict"""
         messages = sanitize_messages(messages, supports_tools=supports_tools)
@@ -123,7 +130,7 @@ class LLMClient:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
-        extra_body = self._build_extra_body(provider, stream=True)
+        extra_body = self._build_extra_body(provider, stream=True, deep_thinking=deep_thinking)
         if extra_body:
             kwargs["extra_body"] = extra_body
 

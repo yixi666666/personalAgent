@@ -87,6 +87,7 @@ class ChatService:
         temperature: Optional[float] = None,
         session_id: str = "",
         parent_id: Optional[str] = None,
+        deep_thinking: bool = False,
     ) -> AsyncGenerator[dict, None]:
         """流式对话（迭代式工具调用循环）
 
@@ -114,6 +115,7 @@ class ChatService:
                     parent_id=current_parent_id,
                     supports_tools=supports_tools,
                     format_retry_count=format_retry_count,
+                    deep_thinking=deep_thinking,
                 )
             else:
                 result = await self._call_stream(
@@ -124,6 +126,7 @@ class ChatService:
                     session_id=session_id,
                     parent_id=current_parent_id,
                     supports_tools=supports_tools,
+                    deep_thinking=deep_thinking,
                 )
 
             for event in result.events:
@@ -153,6 +156,7 @@ class ChatService:
         session_id: str = "",
         parent_id: Optional[str] = None,
         supports_tools: bool = True,
+        deep_thinking: bool = False,
     ) -> _CallResult:
         """流式调用LLM，返回事件列表和下一步信息"""
         tools = None
@@ -162,6 +166,7 @@ class ChatService:
 
         llm_client = get_llm_client()
         full_content = ""
+        full_reasoning = ""
         tool_calls_buffer = []
         events: list[dict] = []
 
@@ -172,6 +177,7 @@ class ChatService:
             temperature=temperature,
             tools=tools,
             supports_tools=supports_tools,
+            deep_thinking=deep_thinking,
         ):
             # chunk 已是 SDK 解析后的 dict，无需 json.loads
             choices = chunk.get("choices", [])
@@ -181,6 +187,11 @@ class ChatService:
             choice = choices[0]
             delta = choice.get("delta", {})
             finish_reason = choice.get("finish_reason")
+
+            # 处理 DeepSeek 思考模式的 reasoning_content
+            if delta.get("reasoning_content"):
+                full_reasoning += delta["reasoning_content"]
+                events.append({"type": "reasoning_delta", "content": delta["reasoning_content"]})
 
             if delta.get("content"):
                 full_content += delta["content"]
@@ -299,6 +310,7 @@ class ChatService:
         parent_id: Optional[str] = None,
         supports_tools: bool = True,
         format_retry_count: int = 0,
+        deep_thinking: bool = False,
     ) -> _CallResult:
         """非流式调用LLM（用于本地模型 stream=false + tools）"""
         tool_manager = get_tool_manager()
@@ -312,6 +324,7 @@ class ChatService:
             temperature=temperature,
             tools=tools,
             supports_tools=supports_tools,
+            deep_thinking=deep_thinking,
         )
 
         choices = response.get("choices", [])
@@ -322,8 +335,13 @@ class ChatService:
         message = choice.get("message", {})
         finish_reason = choice.get("finish_reason", "stop")
         content = message.get("content") or ""
+        reasoning_content = message.get("reasoning_content") or ""
         tool_calls = message.get("tool_calls")
         events: list[dict] = []
+
+        # 处理 DeepSeek 思考模式的 reasoning_content
+        if reasoning_content:
+            events.append({"type": "reasoning_delta", "content": reasoning_content})
 
         # 原生 function calling 工具调用
         if finish_reason == "tool_calls" and tool_calls:

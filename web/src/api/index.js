@@ -6,8 +6,8 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-export async function chatCompletionsStream(prompt, sessionId = '', model = 'xop3qwen1b7', onChunk = () => {}, onDone = () => {}, onError = () => {}) {
-  const payload = { session_id: sessionId, model, prompt, stream: true }
+export async function chatCompletionsStream(prompt, sessionId = '', model = 'xop3qwen1b7', deepThinking = false, onChunk = () => {}, onDone = () => {}, onError = () => {}) {
+  const payload = { session_id: sessionId, model, prompt, stream: true, deep_thinking: deepThinking }
 
   try {
     const response = await fetch('/v1/chat/completions', {
