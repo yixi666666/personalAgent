@@ -22,22 +22,13 @@ def _load_prompt_file(filename: str) -> str:
         return ""
 
 
-# 预加载两套提示词
-# Arch-Agent-3B -> system-prompt-local.txt（本地模型使用）
-# xop3qwen1b7 -> system-prompt-standard.txt（星火模型使用）
-LOCAL_SYSTEM_PROMPT = _load_prompt_file("system-prompt-local.txt") or "你是一个智能助手，可以帮助用户解答问题。"
-STANDARD_SYSTEM_PROMPT = _load_prompt_file("system-prompt-standard.txt") or LOCAL_SYSTEM_PROMPT
-
-# 模型名到提示词的映射
-_MODEL_PROMPT_MAP = {
-    "Arch-Agent-3B": LOCAL_SYSTEM_PROMPT,
-    "xop3qwen1b7": STANDARD_SYSTEM_PROMPT,
-}
+# 统一使用 system-prompt.txt
+SYSTEM_PROMPT = _load_prompt_file("system-prompt.txt") or "你是一个智能助手，可以帮助用户解答问题。"
 
 
 def get_system_prompt(model: str = "") -> str:
     """根据模型名称返回对应的系统提示词"""
-    return _MODEL_PROMPT_MAP.get(model, STANDARD_SYSTEM_PROMPT)
+    return SYSTEM_PROMPT
 
 
 def sanitize_messages(messages: list[dict], supports_tools: bool = True) -> list[dict]:
@@ -109,7 +100,6 @@ class ContextManager:
             "session_id": session_id,
             "history": history,
             "metadata": {},
-            "tool_results": [],
         }
 
     def build_llm_messages(

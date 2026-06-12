@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { chatCompletionsStream, listSessions, getSession, deleteSession, listModels, listTools } from '../api'
+import { chatCompletionsStream, listSessions, getSession, deleteSession, listModels, listTools, getToolCalls } from '../api'
 
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref([])
@@ -31,75 +31,82 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /**
+   * 从后端 contents 数组构建有序 blocks 数组
+   * blocks: [{ type: 'reasoning'|'text'|'tool_call', content?, toolCall? }, ...]
+   */
+  function buildBlocksFromContents(contents, toolCallsMap = {}, messageId = '') {
+    const blocks = []
+    for (const c of contents) {
+      if (c.type === 'reasoning') {
+        blocks.push({ type: 'reasoning', content: c.content || '' })
+      } else if (c.type === 'text') {
+        blocks.push({ type: 'text', content: c.content || '' })
+      } else if (c.type === 'tool_call') {
+        const callId = c.content
+        const tc = toolCallsMap[callId]
+        blocks.push({
+          type: 'tool_call',
+          _messageId: messageId,
+          toolCall: tc || {
+            id: callId,
+            type: 'function',
+            function: { name: '未知', arguments: '{}' },
+            result: null,
+            status: 'unknown',
+          },
+        })
+      }
+    }
+    return blocks
+  }
+
   async function loadSessionData(sessionId) {
     try {
       const data = await getSession(sessionId)
       currentSessionId.value = sessionId
-      // 处理历史消息：将 role=tool 消息合并到对应 assistant 消息中
       const rawMessages = data.messages || []
       const processed = []
-      const toolMsgMap = {} // call_id -> tool消息content
-
-      // 第一遍：收集所有 tool 消息，按 tool_call_id 索引
-      for (const m of rawMessages) {
-        if (m.role === 'tool' && m.tool_call_id) {
-          toolMsgMap[m.tool_call_id] = m.content
-        }
-      }
-
-      // 第二遍：构建显示用的消息列表，将工具调用合并到下一条assistant文本回复中
-      let pendingToolCalls = null
+      let pendingBlocks = []
 
       for (const m of rawMessages) {
-        if (m.role === 'tool') {
-          // tool 消息不单独显示，已合并到 assistant 消息中
+        const contents = m.contents || []
+        const hasToolCall = contents.some(c => c.type === 'tool_call')
+        const hasText = contents.some(c => c.type === 'text')
+
+        // 不在这里请求工具详情，tool_call 块只存 call_id
+        // 用户点击工具符号时再懒加载
+        const currentBlocks = buildBlocksFromContents(contents, {}, m.id)
+
+        // 有 tool_call 的 assistant 消息暂存，等下一条 assistant 消息合并
+        // 这样工具调用和后续回复在同一个消息气泡中显示
+        if (m.role === 'assistant' && hasToolCall) {
+          pendingBlocks = pendingBlocks.concat(currentBlocks)
           continue
         }
 
+        // 合并暂存的 blocks + 当前 blocks
+        const allBlocks = pendingBlocks.length > 0
+          ? pendingBlocks.concat(currentBlocks)
+          : currentBlocks
+        pendingBlocks = []
+
         const msg = {
-          ...m,
+          id: m.id,
+          role: m.role,
+          blocks: allBlocks,
           display_time: m.created_time || '',
-        }
-
-        // assistant 消息：转换 tool_calls 字段名并附加工具结果
-        if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
-          const toolCalls = m.tool_calls.map(tc => ({
-            ...tc,
-            result: toolMsgMap[tc.id] || null,
-          }))
-
-          // 有工具调用时，content 通常是原始工具调用标签文本，不应显示
-          if (m.content && (m.content.includes('<tool_call') || m.content.includes('tool_calls'))) {
-            msg.content = ''
-          }
-
-          if (msg.content && msg.content.trim()) {
-            // 有文本内容：直接附加工具调用到当前消息
-            msg.toolCalls = toolCalls
-            pendingToolCalls = null
-          } else {
-            // 无文本内容：暂存工具调用，等下一条assistant文本回复消息
-            pendingToolCalls = toolCalls
-            continue // 不单独显示这条消息
-          }
-        }
-
-        // assistant文本回复消息：如果有暂存的工具调用，附加到这条消息
-        if (m.role === 'assistant' && pendingToolCalls) {
-          msg.toolCalls = pendingToolCalls
-          pendingToolCalls = null
         }
 
         processed.push(msg)
       }
 
-      // 如果最后还有未合并的工具调用（没有后续文本回复），单独显示
-      if (pendingToolCalls) {
+      // 如果最后还有未合并的工具调用
+      if (pendingBlocks.length > 0) {
         processed.push({
           id: `pending_tc_${Date.now()}`,
           role: 'assistant',
-          content: '',
-          toolCalls: pendingToolCalls,
+          blocks: pendingBlocks,
           display_time: '',
         })
       }
@@ -149,7 +156,7 @@ export const useChatStore = defineStore('chat', () => {
     const userMsg = {
       id: `temp_${Date.now()}`,
       role: 'user',
-      content: prompt,
+      blocks: [{ type: 'text', content: prompt }],
       display_time: displayTime,
     }
     messages.value.push(userMsg)
@@ -159,13 +166,12 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.push({
       id: `temp_assistant_${Date.now()}`,
       role: 'assistant',
-      content: '',
-      reasoningContent: '',
+      blocks: [],
       isStreaming: true,
       display_time: displayTime,
     })
 
-    // 暂存工具调用信息，等最终文本回复时附加
+    // 暂存工具调用信息
     let pendingStreamToolCalls = null
 
     try {
@@ -179,29 +185,59 @@ export const useChatStore = defineStore('chat', () => {
             currentSessionId.value = chunk.session_id
             loadSessionsData()
           }
+          const blocks = messages.value[assistantIdx].blocks
           if (chunk.reasoning_delta && chunk.reasoning_delta.content) {
             streamingReasoning.value += chunk.reasoning_delta.content
-            messages.value[assistantIdx].reasoningContent = streamingReasoning.value
+            // 更新或追加 reasoning block
+            const lastBlock = blocks[blocks.length - 1]
+            if (lastBlock && lastBlock.type === 'reasoning') {
+              lastBlock.content = streamingReasoning.value
+            } else {
+              blocks.push({ type: 'reasoning', content: streamingReasoning.value })
+            }
           }
           if (chunk.delta && chunk.delta.content) {
             streamingContent.value += chunk.delta.content
-            messages.value[assistantIdx].content = streamingContent.value
+            // 更新或追加 text block
+            const lastBlock = blocks[blocks.length - 1]
+            if (lastBlock && lastBlock.type === 'text') {
+              lastBlock.content = streamingContent.value
+            } else {
+              blocks.push({ type: 'text', content: streamingContent.value })
+            }
           }
           if (chunk.content_replace) {
             streamingContent.value = chunk.content_replace.content
-            messages.value[assistantIdx].content = streamingContent.value
+            const lastBlock = blocks[blocks.length - 1]
+            if (lastBlock && lastBlock.type === 'text') {
+              lastBlock.content = streamingContent.value
+            } else {
+              blocks.push({ type: 'text', content: streamingContent.value })
+            }
           }
           if (chunk.tool_calls) {
-            // 暂存工具调用，不立即显示
             pendingStreamToolCalls = chunk.tool_calls
+            // 插入 tool_call blocks
+            for (const tc of chunk.tool_calls) {
+              blocks.push({ type: 'tool_call', toolCall: tc })
+            }
+            // 重置流式状态，下一轮重新开始
+            streamingReasoning.value = ''
+            streamingContent.value = ''
           }
           if (chunk.tool_results && pendingStreamToolCalls) {
-            // 将工具执行结果附加到暂存的 toolCall 上
             for (const tr of chunk.tool_results) {
               const tc = pendingStreamToolCalls.find(c => c.id === tr.id)
               if (tc) {
                 tc.result = tr.result
                 tc.status = tr.status
+              }
+              // 同步更新 blocks 中的 toolCall 引用
+              for (const b of blocks) {
+                if (b.type === 'tool_call' && b.toolCall.id === tr.id) {
+                  b.toolCall.result = tr.result
+                  b.toolCall.status = tr.status
+                }
               }
             }
           }
@@ -209,17 +245,6 @@ export const useChatStore = defineStore('chat', () => {
         () => {
           streaming.value = false
           loading.value = false
-          if (streamingContent.value) {
-            messages.value[assistantIdx].content = streamingContent.value
-          }
-          if (streamingReasoning.value) {
-            messages.value[assistantIdx].reasoningContent = streamingReasoning.value
-          }
-          // 将暂存的工具调用附加到最终消息
-          if (pendingStreamToolCalls) {
-            messages.value[assistantIdx].toolCalls = pendingStreamToolCalls
-            pendingStreamToolCalls = null
-          }
           messages.value[assistantIdx].isStreaming = false
           streamingContent.value = ''
           streamingReasoning.value = ''
@@ -228,12 +253,9 @@ export const useChatStore = defineStore('chat', () => {
         (error) => {
           streaming.value = false
           loading.value = false
-          messages.value[assistantIdx].content = `错误: ${error}`
-          // 即使出错也附加工具调用
-          if (pendingStreamToolCalls) {
-            messages.value[assistantIdx].toolCalls = pendingStreamToolCalls
-            pendingStreamToolCalls = null
-          }
+          // 添加错误 text block
+          const blocks = messages.value[assistantIdx].blocks
+          blocks.push({ type: 'text', content: `错误: ${error}` })
           messages.value[assistantIdx].isStreaming = false
           streamingContent.value = ''
           streamingReasoning.value = ''
@@ -242,7 +264,8 @@ export const useChatStore = defineStore('chat', () => {
     } catch (err) {
       streaming.value = false
       loading.value = false
-      messages.value[assistantIdx].content = `请求失败: ${err.message}`
+      const blocks = messages.value[assistantIdx].blocks
+      blocks.push({ type: 'text', content: `请求失败: ${err.message}` })
       messages.value[assistantIdx].isStreaming = false
       streamingContent.value = ''
       streamingReasoning.value = ''
@@ -267,6 +290,45 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /**
+   * 懒加载：用户点击工具符号时，按 message_id 请求工具详情并更新对应 block
+   * messageId 是 tool_call 所属的原始消息ID（通过 block._messageId 传递）
+   */
+  async function loadToolCallDetail(messageId, callId) {
+    // 在所有消息的 blocks 中查找 _messageId 匹配的 tool_call block
+    let alreadyLoaded = false
+    for (const msg of messages.value) {
+      for (const b of msg.blocks || []) {
+        if (b.type === 'tool_call' && b._messageId === messageId && b.toolCall?.id === callId) {
+          if (b.toolCall.status !== 'unknown' && b.toolCall.result !== null) {
+            alreadyLoaded = true
+          }
+          break
+        }
+      }
+      if (alreadyLoaded) return null
+    }
+    try {
+      const toolCallsData = await getToolCalls(messageId)
+      // 更新所有 _messageId 匹配的 tool_call blocks（就地更新属性，保持引用不变）
+      for (const msg of messages.value) {
+        for (const b of msg.blocks || []) {
+          if (b.type !== 'tool_call' || b._messageId !== messageId) continue
+          const tc = toolCallsData.find(t => t.call_id === b.toolCall?.id)
+          if (tc) {
+            b.toolCall.function = { name: tc.tool_name, arguments: tc.parameters }
+            b.toolCall.result = tc.result
+            b.toolCall.status = tc.status
+          }
+        }
+      }
+      return toolCallsData.find(t => t.call_id === callId) || null
+    } catch (err) {
+      console.error('懒加载工具详情失败:', err)
+      return null
+    }
+  }
+
   return {
     sessions,
     currentSessionId,
@@ -286,6 +348,7 @@ export const useChatStore = defineStore('chat', () => {
     newSession,
     selectSession,
     sendMessage,
+    loadToolCallDetail,
     loadModels: loadModelsData,
     loadTools: loadToolsData,
   }

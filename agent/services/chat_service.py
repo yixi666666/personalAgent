@@ -14,19 +14,17 @@ logger = logging.getLogger(__name__)
 MAX_TOOL_ROUNDS = 10
 
 
-class _CallResult:
-    """单次LLM调用的结果，用于迭代式工具循环"""
+class _Control:
+    """内部控制信号，用于工具循环传递 next_messages 等信息"""
 
-    __slots__ = ("events", "next_messages", "next_parent_id", "format_retry_count")
+    __slots__ = ("next_messages", "next_parent_id", "format_retry_count")
 
     def __init__(
         self,
-        events: list[dict],
         next_messages: Optional[list[dict]] = None,
         next_parent_id: Optional[str] = None,
         format_retry_count: int = 0,
     ):
-        self.events = events
         self.next_messages = next_messages
         self.next_parent_id = next_parent_id
         self.format_retry_count = format_retry_count
@@ -105,8 +103,10 @@ class ChatService:
         format_retry_count = 0
 
         for _round in range(MAX_TOOL_ROUNDS):
+            control = None
+
             if is_local and supports_tools:
-                result = await self._call_non_stream(
+                gen = self._call_non_stream(
                     messages=current_messages,
                     model=model,
                     max_tokens=max_tokens,
@@ -118,7 +118,7 @@ class ChatService:
                     deep_thinking=deep_thinking,
                 )
             else:
-                result = await self._call_stream(
+                gen = self._call_stream(
                     messages=current_messages,
                     model=model,
                     max_tokens=max_tokens,
@@ -129,13 +129,16 @@ class ChatService:
                     deep_thinking=deep_thinking,
                 )
 
-            for event in result.events:
-                yield event
+            async for item in gen:
+                if isinstance(item, _Control):
+                    control = item
+                else:
+                    yield item
 
-            if result.next_messages is not None:
-                current_messages = result.next_messages
-                current_parent_id = result.next_parent_id
-                format_retry_count = result.format_retry_count
+            if control and control.next_messages is not None:
+                current_messages = control.next_messages
+                current_parent_id = control.next_parent_id
+                format_retry_count = control.format_retry_count
                 continue
 
             return
@@ -157,8 +160,8 @@ class ChatService:
         parent_id: Optional[str] = None,
         supports_tools: bool = True,
         deep_thinking: bool = False,
-    ) -> _CallResult:
-        """流式调用LLM，返回事件列表和下一步信息"""
+    ) -> AsyncGenerator[dict | _Control, None]:
+        """流式调用LLM，实时 yield 事件，结束时 yield _Control 控制信号"""
         tools = None
         if supports_tools:
             tool_manager = get_tool_manager()
@@ -168,7 +171,6 @@ class ChatService:
         full_content = ""
         full_reasoning = ""
         tool_calls_buffer = []
-        events: list[dict] = []
 
         async for chunk in llm_client.chat_stream(
             messages=messages,
@@ -179,7 +181,6 @@ class ChatService:
             supports_tools=supports_tools,
             deep_thinking=deep_thinking,
         ):
-            # chunk 已是 SDK 解析后的 dict，无需 json.loads
             choices = chunk.get("choices", [])
             if not choices:
                 continue
@@ -191,11 +192,11 @@ class ChatService:
             # 处理 DeepSeek 思考模式的 reasoning_content
             if delta.get("reasoning_content"):
                 full_reasoning += delta["reasoning_content"]
-                events.append({"type": "reasoning_delta", "content": delta["reasoning_content"]})
+                yield {"type": "reasoning_delta", "content": delta["reasoning_content"]}
 
             if delta.get("content"):
                 full_content += delta["content"]
-                events.append({"type": "delta", "content": delta["content"]})
+                yield {"type": "delta", "content": delta["content"]}
 
             if delta.get("tool_calls"):
                 for tc in delta["tool_calls"]:
@@ -215,20 +216,24 @@ class ChatService:
 
             if finish_reason:
                 if finish_reason == "tool_calls" and tool_calls_buffer:
+                    # 按文档流程：存储 assistant 消息 + message_contents(reasoning + tool_call) + tool_calls(pending)
                     session_manager = get_session_manager()
-                    assistant_msg = session_manager.add_message(
+                    assistant_msg_id = session_manager.add_assistant_message_with_tool_calls(
                         session_id=session_id,
-                        role="assistant",
                         content=full_content or "",
+                        tool_calls=tool_calls_buffer,
                         parent_id=parent_id,
+                        reasoning_content=full_reasoning,
                     )
-                    events.append({"type": "tool_calls", "tool_calls": tool_calls_buffer})
+                    yield {"type": "tool_calls", "tool_calls": tool_calls_buffer}
 
-                    next_messages, next_parent_id, tool_results_info = await self._save_and_execute_tool_calls(
-                        tool_calls_buffer, session_id, assistant_msg.id, model, supports_tools,
+                    # 执行工具并更新 tool_calls 记录
+                    next_messages, next_parent_id, tool_results_info = await self._execute_and_update_tool_calls(
+                        tool_calls_buffer, session_id, assistant_msg_id, model, supports_tools,
                     )
-                    events.append({"type": "tool_results", "tool_results": tool_results_info})
-                    return _CallResult(events=events, next_messages=next_messages, next_parent_id=next_parent_id)
+                    yield {"type": "tool_results", "tool_results": tool_results_info}
+                    yield _Control(next_messages=next_messages, next_parent_id=next_parent_id)
+                    return
 
                 # 正常结束 - 不支持原生FC的模型可能从文本中输出工具调用
                 if full_content and not supports_tools:
@@ -236,22 +241,24 @@ class ChatService:
 
                     if extracted_calls:
                         session_manager = get_session_manager()
-                        assistant_msg = session_manager.add_message(
+                        assistant_msg_id = session_manager.add_assistant_message_with_tool_calls(
                             session_id=session_id,
-                            role="assistant",
                             content="",
+                            tool_calls=extracted_calls,
                             parent_id=parent_id,
                         )
-                        events.append({"type": "content_replace", "content": ""})
-                        events.append({"type": "tool_calls", "tool_calls": extracted_calls})
+                        yield {"type": "content_replace", "content": ""}
+                        yield {"type": "tool_calls", "tool_calls": extracted_calls}
 
-                        next_messages, next_parent_id, tool_results_info = await self._save_and_execute_tool_calls(
-                            extracted_calls, session_id, assistant_msg.id, model, supports_tools,
+                        next_messages, next_parent_id, tool_results_info = await self._execute_and_update_tool_calls(
+                            extracted_calls, session_id, assistant_msg_id, model, supports_tools,
                         )
-                        events.append({"type": "tool_results", "tool_results": tool_results_info})
-                        return _CallResult(events=events, next_messages=next_messages, next_parent_id=next_parent_id)
+                        yield {"type": "tool_results", "tool_results": tool_results_info}
+                        yield _Control(next_messages=next_messages, next_parent_id=next_parent_id)
+                        return
 
                     elif parse_errors:
+                        # 按文档：参数校验异常时，终止回答用户问题
                         session_manager = get_session_manager()
                         assistant_msg = session_manager.add_message(
                             session_id=session_id,
@@ -266,10 +273,11 @@ class ChatService:
                             content=error_feedback,
                             parent_id=assistant_msg.id,
                         )
-                        events.append({"type": "error", "error": error_feedback})
+                        yield {"type": "error", "error": error_feedback}
 
                         next_messages = await self._rebuild_context(session_id, model, supports_tools)
-                        return _CallResult(events=events, next_messages=next_messages, next_parent_id=assistant_msg.id)
+                        yield _Control(next_messages=next_messages, next_parent_id=assistant_msg.id)
+                        return
 
                 # 普通回复
                 if full_content:
@@ -279,10 +287,11 @@ class ChatService:
                         role="assistant",
                         content=full_content,
                         parent_id=parent_id,
+                        reasoning_content=full_reasoning,
                     )
 
-                events.append({"type": "finish", "finish_reason": finish_reason})
-                return _CallResult(events=events)
+                yield {"type": "finish", "finish_reason": finish_reason}
+                return
 
         # 流正常结束但没有finish_reason
         if full_content:
@@ -292,9 +301,9 @@ class ChatService:
                 role="assistant",
                 content=full_content,
                 parent_id=parent_id,
+                reasoning_content=full_reasoning,
             )
-        events.append({"type": "finish", "finish_reason": "stop"})
-        return _CallResult(events=events)
+        yield {"type": "finish", "finish_reason": "stop"}
 
     # ------------------------------------------------------------------
     # 非流式调用路径（本地模型）
@@ -311,7 +320,7 @@ class ChatService:
         supports_tools: bool = True,
         format_retry_count: int = 0,
         deep_thinking: bool = False,
-    ) -> _CallResult:
+    ) -> AsyncGenerator[dict | _Control, None]:
         """非流式调用LLM（用于本地模型 stream=false + tools）"""
         tool_manager = get_tool_manager()
         tools = await tool_manager.get_tool_schemas_for_llm()
@@ -329,7 +338,8 @@ class ChatService:
 
         choices = response.get("choices", [])
         if not choices:
-            return _CallResult(events=[{"type": "finish", "finish_reason": "stop"}])
+            yield {"type": "finish", "finish_reason": "stop"}
+            return
 
         choice = choices[0]
         message = choice.get("message", {})
@@ -337,34 +347,37 @@ class ChatService:
         content = message.get("content") or ""
         reasoning_content = message.get("reasoning_content") or ""
         tool_calls = message.get("tool_calls")
-        events: list[dict] = []
 
         # 处理 DeepSeek 思考模式的 reasoning_content
         if reasoning_content:
-            events.append({"type": "reasoning_delta", "content": reasoning_content})
+            yield {"type": "reasoning_delta", "content": reasoning_content}
 
         # 原生 function calling 工具调用
         if finish_reason == "tool_calls" and tool_calls:
             session_manager = get_session_manager()
-            assistant_msg = session_manager.add_message(
-                session_id=session_id,
-                role="assistant",
-                content=content,
-                parent_id=parent_id,
-            )
-
             formatted_calls = self._format_tool_calls(tool_calls)
 
-            if content:
-                events.append({"type": "delta", "content": content})
-
-            events.append({"type": "tool_calls", "tool_calls": formatted_calls})
-
-            next_messages, next_parent_id, tool_results_info = await self._save_and_execute_tool_calls(
-                formatted_calls, session_id, assistant_msg.id, model, supports_tools,
+            # 按文档流程：存储 assistant 消息 + message_contents(reasoning + tool_call) + tool_calls(pending)
+            assistant_msg_id = session_manager.add_assistant_message_with_tool_calls(
+                session_id=session_id,
+                content=content,
+                tool_calls=formatted_calls,
+                parent_id=parent_id,
+                reasoning_content=reasoning_content,
             )
-            events.append({"type": "tool_results", "tool_results": tool_results_info})
-            return _CallResult(events=events, next_messages=next_messages, next_parent_id=next_parent_id)
+
+            if content:
+                yield {"type": "delta", "content": content}
+
+            yield {"type": "tool_calls", "tool_calls": formatted_calls}
+
+            # 执行工具并更新 tool_calls 记录
+            next_messages, next_parent_id, tool_results_info = await self._execute_and_update_tool_calls(
+                formatted_calls, session_id, assistant_msg_id, model, supports_tools,
+            )
+            yield {"type": "tool_results", "tool_results": tool_results_info}
+            yield _Control(next_messages=next_messages, next_parent_id=next_parent_id)
+            return
 
         # 普通回复 - 检查文本中是否包含工具调用
         if content:
@@ -374,28 +387,30 @@ class ChatService:
 
             if extracted_calls:
                 session_manager = get_session_manager()
-                assistant_msg = session_manager.add_message(
+                assistant_msg_id = session_manager.add_assistant_message_with_tool_calls(
                     session_id=session_id,
-                    role="assistant",
                     content="",
+                    tool_calls=extracted_calls,
                     parent_id=parent_id,
                 )
-                events.append({"type": "content_replace", "content": ""})
-                events.append({"type": "tool_calls", "tool_calls": extracted_calls})
+                yield {"type": "content_replace", "content": ""}
+                yield {"type": "tool_calls", "tool_calls": extracted_calls}
 
-                next_messages, next_parent_id, tool_results_info = await self._save_and_execute_tool_calls(
-                    extracted_calls, session_id, assistant_msg.id, model, supports_tools,
+                next_messages, next_parent_id, tool_results_info = await self._execute_and_update_tool_calls(
+                    extracted_calls, session_id, assistant_msg_id, model, supports_tools,
                 )
-                events.append({"type": "tool_results", "tool_results": tool_results_info})
-                return _CallResult(events=events, next_messages=next_messages, next_parent_id=next_parent_id)
+                yield {"type": "tool_results", "tool_results": tool_results_info}
+                yield _Control(next_messages=next_messages, next_parent_id=next_parent_id)
+                return
 
             elif parse_errors:
+                # 按文档：参数校验异常时，终止回答用户问题
                 MAX_FORMAT_RETRIES = 2
                 if format_retry_count >= MAX_FORMAT_RETRIES:
                     error_msg = "模型多次输出非规范工具调用格式，已停止重试。错误详情：" + "; ".join(parse_errors)
-                    events.append({"type": "error", "error": error_msg})
-                    events.append({"type": "finish", "finish_reason": "stop"})
-                    return _CallResult(events=events)
+                    yield {"type": "error", "error": error_msg}
+                    yield {"type": "finish", "finish_reason": "stop"}
+                    return
 
                 session_manager = get_session_manager()
                 assistant_msg = session_manager.add_message(
@@ -411,34 +426,34 @@ class ChatService:
                     content=error_feedback,
                     parent_id=assistant_msg.id,
                 )
-                events.append({"type": "error", "error": error_feedback})
+                yield {"type": "error", "error": error_feedback}
 
                 next_messages = await self._rebuild_context(session_id, model, supports_tools)
-                return _CallResult(
-                    events=events,
+                yield _Control(
                     next_messages=next_messages,
                     next_parent_id=assistant_msg.id,
                     format_retry_count=format_retry_count + 1,
                 )
+                return
 
             # 纯文本回复（无工具调用）
-            events.append({"type": "delta", "content": content})
+            yield {"type": "delta", "content": content}
             session_manager = get_session_manager()
             session_manager.add_message(
                 session_id=session_id,
                 role="assistant",
                 content=content,
                 parent_id=parent_id,
+                reasoning_content=reasoning_content,
             )
 
-        events.append({"type": "finish", "finish_reason": finish_reason})
-        return _CallResult(events=events)
+        yield {"type": "finish", "finish_reason": finish_reason}
 
     # ------------------------------------------------------------------
-    # 公共方法：工具调用保存与执行
+    # 公共方法：工具执行与更新
     # ------------------------------------------------------------------
 
-    async def _save_and_execute_tool_calls(
+    async def _execute_and_update_tool_calls(
         self,
         tool_calls: list[dict],
         session_id: str,
@@ -446,7 +461,13 @@ class ChatService:
         model: str,
         supports_tools: bool,
     ) -> tuple[list[dict], str, list[dict]]:
-        """保存工具调用记录、执行工具、保存结果消息，返回重建的上下文
+        """执行工具调用并更新 tool_calls 记录
+
+        按文档流程：
+        1. tool_calls 已在 add_assistant_message_with_tool_calls 中以 status=pending 创建
+        2. 执行工具
+        3. 更新 tool_calls 记录（status、result），使用 call_id + message_id 双条件定位
+        4. 不存储 role='tool' 消息，工具结果仅存 tool_calls 表
 
         返回: (new_messages, assistant_msg_id, tool_results_events)
         """
@@ -457,7 +478,6 @@ class ChatService:
         tool_results_info = []
         for i, tc in enumerate(tool_calls):
             tool_name = tc.get("function", {}).get("name", "unknown")
-            arguments_str = tc.get("function", {}).get("arguments", "{}")
             tool_call_id = tc.get("id", f"call_{uuid.uuid4().hex[:8]}")
             result_msg = tool_results[i] if i < len(tool_results) else {}
             result_content = result_msg.get("content", "")
@@ -473,21 +493,13 @@ class ChatService:
             except (json.JSONDecodeError, KeyError):
                 pass
 
-            session_manager.save_tool_call(
+            # 更新 tool_calls 记录（使用 call_id + message_id 双条件定位）
+            session_manager.update_tool_call(
+                call_id=tool_call_id,
                 message_id=assistant_msg_id,
-                tool_name=tool_name,
-                parameters=arguments_str,
                 result=result_content,
                 status=call_status,
                 error_message=error_message,
-                call_id=tool_call_id,
-            )
-
-            session_manager.add_message(
-                session_id=session_id,
-                role="tool",
-                content=result_content,
-                parent_id=assistant_msg_id,
             )
 
             tool_results_info.append({
@@ -497,7 +509,7 @@ class ChatService:
                 "status": call_status,
             })
 
-        # 重建上下文
+        # 重建上下文（从数据库加载，tool 消息从 tool_calls 表动态生成）
         new_messages = await self._rebuild_context(session_id, model, supports_tools)
         return new_messages, assistant_msg_id, tool_results_info
 
@@ -569,15 +581,10 @@ class ChatService:
         errors = []
 
         if model_type == "local":
-            # 本地模型 Arch-Agent-3B：
-            # - 通过 LLaMA-Factory OpenAI API 返回时，特殊 token 被解码为 <tool_call\n{...}\n<tool_call
-            #   注意：闭合标签 </tool_call 也可能被解码为 <tool_call
-            # - 原始 chat_template 格式为 <｜tool_call_begin｜>{...}<｜tool_call_end｜>
-            # 两种格式都需要兼容
             patterns = [
-                r'<tool_call\s*(\{.*?\})\s*</?tool_call',  # LLaMA-Factory 解码后的格式（兼容 <tool_call 和 </tool_call）
-                r'\u003c\uff5ctool_call_begin\uff5c\u003e\s*(\{.*?\})\s*\u003c\uff5ctool_call_end\uff5c\u003e',  # 原始特殊 token 格式
-                r'\u003c\uff5c\s*(\{.*?\})\s*\uff5c\u003e',  # 简化版 <｜{...}｜> 格式
+                r'<tool_call\s*(\{.*?\})\s*</?tool_call',
+                r'\u003c\uff5ctool_call_begin\uff5c\u003e\s*(\{.*?\})\s*\u003c\uff5ctool_call_end\uff5c\u003e',
+                r'\u003c\uff5c\s*(\{.*?\})\s*\uff5c\u003e',
             ]
             matches = []
             for p in patterns:
@@ -603,7 +610,6 @@ class ChatService:
                     except (json.JSONDecodeError, KeyError) as e:
                         errors.append(f"工具调用 #{i+1} JSON解析失败: {e}")
             else:
-                # 文本中无标签，检测是否包含非规范工具调用意图
                 non_standard_patterns = [
                     (r"Action:\s*\w+", "检测到非规范的 Action: 格式，本地模型只接受 <tool_call 格式"),
                     (r'"tool_calls"\s*:', "检测到非规范的 JSON tool_calls 格式，本地模型只接受 <tool_call 格式"),
@@ -614,7 +620,6 @@ class ChatService:
                         break
 
         else:
-            # 星火模型：接受 {"tool_calls": [...]} 格式
             tool_calls_idx = text.find('"tool_calls"')
             if tool_calls_idx != -1:
                 start = text.rfind('{', 0, tool_calls_idx)

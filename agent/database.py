@@ -41,9 +41,17 @@ def init_db():
             session_id TEXT DEFAULT NULL,
             parent_id TEXT DEFAULT NULL,
             role TEXT DEFAULT NULL,
-            content TEXT DEFAULT NULL,
             created_time INTEGER DEFAULT NULL,
             updated_time INTEGER DEFAULT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS message_contents (
+            id TEXT PRIMARY KEY,
+            message_id TEXT DEFAULT NULL,
+            type TEXT DEFAULT NULL,
+            content TEXT DEFAULT NULL,
+            sort_order INTEGER DEFAULT NULL,
+            created_time INTEGER DEFAULT NULL
         );
 
         CREATE TABLE IF NOT EXISTS tool_calls (

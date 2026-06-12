@@ -2,6 +2,13 @@ from pydantic import BaseModel
 from typing import Optional
 
 
+class ContentItem(BaseModel):
+    """消息内容块"""
+    type: str  # 'text', 'reasoning', 'tool_call', 'image', 'file'
+    content: Optional[str] = None
+    sort_order: int = 0
+
+
 class SessionListItem(BaseModel):
     id: str
     title: Optional[str] = None
@@ -11,25 +18,23 @@ class SessionListItem(BaseModel):
     message_count: int = 0
 
 
-class ToolCallInfo(BaseModel):
-    """工具调用信息（用于历史消息展示）"""
-    id: Optional[str] = None
-    type: str = "function"
-    function: dict = {}  # {"name": "...", "arguments": "..."}
-    result: Optional[str] = None
+class ToolCallDetail(BaseModel):
+    """工具调用详情（懒加载接口返回）"""
+    call_id: Optional[str] = None
+    message_id: Optional[str] = None
+    tool_name: Optional[str] = None
+    parameters: Optional[str] = None
     status: Optional[str] = None
+    result: Optional[str] = None
 
 
 class MessageItem(BaseModel):
     id: str
     parent_id: Optional[str] = None
     role: Optional[str] = None
-    content: Optional[str] = None
+    contents: list[ContentItem] = []
     created_time: Optional[str] = None
     updated_time: Optional[str] = None
-    tool_calls: Optional[list[ToolCallInfo]] = None
-    tool_call_id: Optional[str] = None
-    name: Optional[str] = None
 
 
 class SessionListResponse(BaseModel):

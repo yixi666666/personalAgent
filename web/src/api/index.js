@@ -75,6 +75,11 @@ export async function deleteSession(sessionId) {
   await api.delete(`/sessions/${sessionId}`)
 }
 
+export async function getToolCalls(messageId) {
+  const { data } = await api.get('/tool-calls', { params: { message_id: messageId } })
+  return data
+}
+
 export async function listModels() {
   const { data } = await api.get('/models')
   return data

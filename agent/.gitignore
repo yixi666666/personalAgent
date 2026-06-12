@@ -25,5 +25,4 @@ LLM-Introduction/
 *.md
 *.txt
 !requirements.txt
-!system-prompt-local.txt
-!system-prompt-standard.txt
+!system-prompt.txt

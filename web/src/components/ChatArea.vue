@@ -16,7 +16,7 @@
       </div>
 
       <div
-        v-for="msg in messages"
+        v-for="msg in processedMessages"
         :key="msg.id"
         class="message-item"
         :class="msg.role"
@@ -31,33 +31,68 @@
             <span class="message-role">{{ msg.role === 'user' ? '我' : '助手' }}</span>
             <span v-if="msg.display_time" class="message-time">{{ msg.display_time }}</span>
           </div>
-          <div v-if="msg.reasoningContent" class="reasoning-section">
-            <el-collapse>
-              <el-collapse-item>
-                <template #title>
-                  <span class="reasoning-title">💭 深度思考</span>
+          <!-- 按 segments 顺序渲染 -->
+          <template v-for="(segment, sIdx) in msg.segments" :key="sIdx">
+            <!-- Reasoning segment: 深度思考折叠框，工具符号内联 -->
+            <div v-if="segment.type === 'reasoning'" class="reasoning-section">
+              <el-collapse v-model="segment.expanded">
+                <el-collapse-item name="1">
+                  <template #title>
+                    <span class="reasoning-title">💭 深度思考</span>
+                  </template>
+                  <div class="reasoning-flow">
+                    <template v-for="(part, pIdx) in segment.parts" :key="pIdx">
+                      <span v-if="part.type === 'text'" class="flow-text">{{ part.content }}</span>
+                      <el-popover
+                        v-else-if="part.type === 'tool_symbol'"
+                        trigger="click"
+                        :width="320"
+                        placement="top"
+                        @before-enter="onToolSymbolClick(msg, part)"
+                      >
+                        <template #reference>
+                          <span class="tool-symbol" :title="part.toolCall.function?.name || part.toolCall.id">🔧</span>
+                        </template>
+                        <div class="tool-popover-content">
+                          <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
+                          <div v-if="part.toolCall.result" class="tool-popover-row"><span class="tp-label">结果:</span>{{ truncateText(part.toolCall.result, 200) }}</div>
+                          <div class="tool-popover-row"><span class="tp-label">参数:</span>{{ truncateText(part.toolCall.function?.arguments, 200) }}</div>
+                        </div>
+                      </el-popover>
+                    </template>
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
+            </div>
+            <!-- Text segment: 正文气泡，工具符号内联 -->
+            <div v-else-if="segment.type === 'text'" class="message-content" :class="{ error: msg.isError }">
+              <div class="content-flow">
+                <template v-for="(part, pIdx) in segment.parts" :key="pIdx">
+                  <span v-if="part.type === 'text'" class="flow-text">{{ part.content }}</span>
+                  <el-popover
+                    v-else-if="part.type === 'tool_symbol'"
+                    trigger="click"
+                    :width="320"
+                    placement="top"
+                    @before-enter="onToolSymbolClick(msg, part)"
+                  >
+                    <template #reference>
+                      <span class="tool-symbol" :title="part.toolCall.function?.name || part.toolCall.id">🔧</span>
+                    </template>
+                    <div class="tool-popover-content">
+                      <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
+                      <div v-if="part.toolCall.result" class="tool-popover-row"><span class="tp-label">结果:</span>{{ truncateText(part.toolCall.result, 200) }}</div>
+                      <div class="tool-popover-row"><span class="tp-label">参数:</span>{{ truncateText(part.toolCall.function?.arguments, 200) }}</div>
+                    </div>
+                  </el-popover>
                 </template>
-                <pre class="reasoning-text">{{ msg.reasoningContent }}</pre>
-              </el-collapse-item>
-            </el-collapse>
-          </div>
-          <div v-if="msg.content || msg.isStreaming" class="message-content" :class="{ error: msg.isError }">
-            <pre class="content-text">{{ msg.content }}</pre>
-            <span v-if="msg.isStreaming" class="streaming-cursor"></span>
-          </div>
-          <div v-if="msg.toolCalls && msg.toolCalls.length > 0" class="tool-calls">
-            <el-collapse>
-              <el-collapse-item>
-                <template #title>
-                  <span class="tool-calls-title">🔧 工具调用 ({{ msg.toolCalls.length }})</span>
-                </template>
-                <div v-for="(tc, idx) in msg.toolCalls" :key="idx" class="tool-call-item">
-                  <span class="tool-call-name"><span class="tool-label-name">名称:</span>{{ tc.function?.name || tc.id }}</span>
-                  <span v-if="tc.result" class="tool-call-result-inline" :title="tc.result"><span class="tool-label-result">结果:</span>{{ truncateText(tc.result, 60) }}</span>
-                  <span class="tool-call-args-inline" :title="tc.function?.arguments"><span class="tool-label-args">参数:</span>{{ truncateText(tc.function?.arguments, 60) }}</span>
-                </div>
-              </el-collapse-item>
-            </el-collapse>
+              </div>
+              <span v-if="msg.isStreaming && sIdx === msg.segments.length - 1" class="streaming-cursor"></span>
+            </div>
+          </template>
+          <!-- 流式光标：当只有 reasoning 还没有 text 时 -->
+          <div v-if="msg.isStreaming && !msg.segments.some(s => s.type === 'text')" class="message-content">
+            <span class="streaming-cursor"></span>
           </div>
         </div>
       </div>
@@ -112,9 +147,58 @@ const inputRef = ref(null)
 
 const messages = computed(() => chatStore.messages)
 
+/**
+ * 将 blocks 数组转换为 segments 数组
+ * 连续的 reasoning + tool_call 合并为一个 reasoning segment（工具符号内联）
+ * tool_call + text 合并为一个 text segment（工具符号在文本前内联）
+ */
+const processedMessages = computed(() => {
+  return messages.value.map(msg => {
+    if (!msg.blocks || msg.blocks.length === 0) return { ...msg, segments: [] }
+
+    // 先按类型分组：所有 reasoning → 一个 segment，所有 text → 一个 segment
+    // tool_call 内联到它前一个块所属的 segment
+    const segments = []
+    let reasoningSegment = null
+    let textSegment = null
+    let lastType = null // 上一个非 tool_call 块的类型
+
+    for (const block of msg.blocks) {
+      if (block.type === 'reasoning') {
+        if (!reasoningSegment) {
+          reasoningSegment = { type: 'reasoning', parts: [], expanded: msg.isStreaming ? ['1'] : [] }
+          segments.push(reasoningSegment)
+        }
+        if (block.content) {
+          reasoningSegment.parts.push({ type: 'text', content: block.content })
+        }
+        lastType = 'reasoning'
+      } else if (block.type === 'text') {
+        if (!textSegment) {
+          textSegment = { type: 'text', parts: [] }
+          segments.push(textSegment)
+        }
+        if (block.content) {
+          textSegment.parts.push({ type: 'text', content: block.content })
+        }
+        lastType = 'text'
+      } else if (block.type === 'tool_call') {
+        // tool_call 内联到前一个块所属的 segment
+        const target = lastType === 'reasoning' ? reasoningSegment
+          : lastType === 'text' ? textSegment
+          : reasoningSegment || textSegment
+        if (target) {
+          target.parts.push({ type: 'tool_symbol', toolCall: block.toolCall, _messageId: block._messageId })
+        }
+      }
+    }
+
+    return { ...msg, segments }
+  })
+})
+
 function truncateText(text, maxLen = 120) {
   if (!text) return ''
-  // 尝试格式化 JSON
   try {
     const parsed = JSON.parse(text)
     text = JSON.stringify(parsed, null, 2)
@@ -123,6 +207,16 @@ function truncateText(text, maxLen = 120) {
   }
   if (text.length <= maxLen) return text
   return text.slice(0, maxLen) + '...'
+}
+
+async function onToolSymbolClick(msg, part) {
+  const callId = part.toolCall?.id
+  // 优先使用 block 中保存的原始 messageId（tool_call 所属的消息ID）
+  const messageId = part._messageId || msg.id
+  if (!callId || !messageId) return
+  // 如果已有详情（流式时已填充），跳过
+  if (part.toolCall.result !== null && part.toolCall.result !== undefined && part.toolCall.status !== 'unknown') return
+  await chatStore.loadToolCallDetail(messageId, callId)
 }
 
 function avatarStyle(role) {
@@ -155,7 +249,9 @@ watch(
 watch(
   () => {
     const last = chatStore.messages[chatStore.messages.length - 1]
-    return last ? last.content : ''
+    if (!last) return ''
+    const textBlock = last.blocks?.find(b => b.type === 'text')
+    return textBlock ? textBlock.content : ''
   },
   () => scrollToBottom()
 )
@@ -280,6 +376,7 @@ function handleSend() {
   background: #f4f4f5;
   text-align: left;
   max-width: 100%;
+  margin-bottom: 4px;
 }
 
 .message-item.user .message-content {
@@ -293,13 +390,60 @@ function handleSend() {
   border: 1px solid #fde2e2;
 }
 
-.content-text {
-  margin: 0;
+.content-flow,
+.reasoning-flow {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: inherit;
   font-size: 14px;
   line-height: 1.6;
+}
+
+.reasoning-flow {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #6b7280;
+  background: #f9fafb;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid #8b5cf6;
+}
+
+.flow-text {
+  /* inline text within flow */
+}
+
+/* 内联工具符号 */
+.tool-symbol {
+  display: inline;
+  cursor: pointer;
+  font-size: 14px;
+  vertical-align: baseline;
+  user-select: none;
+  border-radius: 3px;
+  padding: 0 1px;
+  transition: background 0.15s;
+}
+
+.tool-symbol:hover {
+  background: rgba(64, 158, 255, 0.15);
+}
+
+/* Popover 内容 */
+.tool-popover-content {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.tool-popover-row {
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.tp-label {
+  font-weight: 600;
+  margin-right: 4px;
+  color: #909399;
 }
 
 .streaming-cursor {
@@ -349,105 +493,14 @@ function handleSend() {
   }
 }
 
-.tool-calls {
-  margin-top: 8px;
-}
-
 .reasoning-section {
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .reasoning-title {
   font-size: 13px;
   color: #8b5cf6;
   font-weight: 500;
-}
-
-.reasoning-text {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.5;
-  color: #6b7280;
-  background: #f9fafb;
-  padding: 8px 12px;
-  border-radius: 6px;
-  border-left: 3px solid #8b5cf6;
-}
-
-.tool-calls-title {
-  font-size: 13px;
-  color: #606266;
-}
-
-.tool-call-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  padding: 6px 8px;
-  background: #fafafa;
-  border-radius: 6px;
-  border: 1px solid #ebeef5;
-  margin-bottom: 6px;
-  overflow: hidden;
-}
-
-.tool-label-name,
-.tool-label-args,
-.tool-label-result {
-  font-size: 11px;
-  margin-right: 4px;
-  flex-shrink: 0;
-}
-
-.tool-label-name {
-  color: #e6a23c;
-}
-
-.tool-label-args {
-  color: #409eff;
-}
-
-.tool-label-result {
-  color: #67c23a;
-}
-
-.tool-call-name {
-  color: #e6a23c;
-  font-weight: 600;
-  font-size: 12px;
-  flex: 2;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tool-call-args-inline {
-  color: #409eff;
-  font-family: monospace;
-  font-size: 12px;
-  flex: 2;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: default;
-}
-
-.tool-call-result-inline {
-  color: #67c23a;
-  font-family: monospace;
-  font-size: 12px;
-  flex: 6;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: default;
 }
 
 .chat-input {
