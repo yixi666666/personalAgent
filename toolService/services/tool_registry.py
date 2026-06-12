@@ -70,6 +70,16 @@ class ToolRegistry:
         )
         logger.info(f"注册自研工具: {date_tool.name}")
 
+        from toolservice.tools.rag_search import RagSearchTool
+        rag_tool = RagSearchTool()
+        self._tools[rag_tool.name] = Tool(
+            name=rag_tool.name,
+            description=rag_tool.description,
+            parameters=rag_tool.parameters,
+            executor=_ensure_async(rag_tool.execute),
+        )
+        logger.info(f"注册自研工具: {rag_tool.name}")
+
     async def _connect_local_mcp(self, server_name: str, server_cfg: dict) -> Optional[Any]:
         """通过stdio方式连接本地MCP服务器"""
         try:

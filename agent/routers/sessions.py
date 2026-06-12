@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from agent.models.session import (
     SessionListResponse,
     SessionDetailResponse,
+    ToolCallDetail,
 )
 from agent.services.session import get_session_manager
 
@@ -33,3 +34,13 @@ def delete_session(session_id: str):
     success = session_manager.delete_session(session_id)
     if not success:
         raise HTTPException(status_code=404, detail=f"会话不存在: {session_id}")
+
+
+@router.get("/tool-calls", response_model=list[ToolCallDetail])
+def get_tool_calls(message_id: str = Query(..., description="消息ID")):
+    """工具详情懒加载接口
+
+    返回该消息下所有工具调用详情（call_id 仅在同一条助手消息内唯一，需配合 message_id 定位）
+    """
+    session_manager = get_session_manager()
+    return session_manager.get_tool_calls_by_message(message_id)

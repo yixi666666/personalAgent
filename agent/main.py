@@ -6,6 +6,7 @@ from agent.config import get_config
 from agent.database import init_db, close_db
 from agent.routers import chat, sessions, models
 from agent.services.tool_manager import get_tool_manager
+from agent.services.llm_client import get_llm_client
 
 # 在模块导入阶段就配置日志，确保所有logger都能输出DEBUG级别
 _config = get_config()
@@ -40,6 +41,8 @@ async def lifespan(app: FastAPI):
 
     logger.info("正在关闭服务...")
     tool_manager.stop_refresh_task()
+    llm_client = get_llm_client()
+    await llm_client.close()
     close_db()
     logger.info("服务已关闭")
 

@@ -1,25 +1,28 @@
-venv/
+# Python 虚拟环境
+.venv/
+
+# Python 编译缓存
 __pycache__/
 *.pyc
 *.pyo
-
-data/
-*.sqlite
-*.sqlite-shm
-*.sqlite-wal
-
-config.yaml
-
-.env
-*.log
-
-.idea/
-.vscode/
-*.swp
-*.swo
-
-.trae/
-
 *.egg-info/
 dist/
 build/
+
+# 配置文件
+config.yaml
+
+# 环境变量
+.env
+
+# 日志
+*.log
+
+# 模型说明文档
+LLM-Introduction/
+
+# 文档和文本文件（仅保留 requirements.txt 和系统提示词）
+*.md
+*.txt
+!requirements.txt
+!system-prompt.txt

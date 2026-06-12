@@ -1,29 +1,4 @@
-# 子项目的 venv
-agent/.venv/
-toolservice/.venv/
-
-# 子项目的 node_modules
-web/node_modules/
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-dist/
-build/
-
-# 数据
-data/
-*.sqlite
-*.sqlite-shm
-*.sqlite-wal
-
-# 子项目各自的 config.yaml 由子项目 .gitignore 管理
-
-# 环境变量
-.env
-*.log
+# ===== 全局通用忽略（所有子项目共享） =====
 
 # IDE
 .idea/
@@ -34,20 +9,25 @@ data/
 # Trae
 .trae/
 
-# 模型说明文档
-agent/LLM-Introduction/
+# 系统文件
+.DS_Store
+Thumbs.db
 
-# 项目说明文档
-agent/Supporting-Documentation.md
-toolservice/Supporting-Documentation.md
-web/Supporting-Documentation.md
+# ===== 跨项目数据目录 =====
 
-# 本地运维脚本和笔记
-stop-all.ps1
-端口占用解决方案.md
+# 运行时数据库（由 agent 服务管理）
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 
-# RagBase 参考资料
-RagBase/
+# ===== 文档和文本文件（仅保留 README.md 和 requirements.txt） =====
+*.md
+!README.md
+*.txt
+!requirements.txt
 
-# Web 构建产物
-web/dist/
+# ===== 根目录专属文件 =====
+
+# 本地运维脚本
+scripts/

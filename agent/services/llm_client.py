@@ -1,7 +1,9 @@
 import json
 import logging
 from typing import Optional, AsyncGenerator
-import httpx
+
+from openai import AsyncOpenAI, APIStatusError, APIConnectionError
+
 from agent.config import get_config
 from agent.services.context import sanitize_messages
 
@@ -12,34 +14,46 @@ class LLMClient:
     def __init__(self):
         config = get_config()
         self.default_model = config.default_model
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._clients: dict[str, AsyncOpenAI] = {}
 
-    async def _get_http_client(self) -> httpx.AsyncClient:
-        if self._http_client is None or self._http_client.is_closed:
-            self._http_client = httpx.AsyncClient(timeout=180.0)
-        return self._http_client
+    def _get_client(self, provider: dict) -> AsyncOpenAI:
+        """根据 provider 配置获取或创建 AsyncOpenAI 客户端"""
+        provider_key = provider.get("provider", "")
+        if provider_key not in self._clients:
+            base_url = provider["base_url"].rstrip("/")
+            api_prefix = provider.get("api_prefix", "/v1").rstrip("/")
+            full_base_url = f"{base_url}{api_prefix}"
+            api_key = provider.get("api_key") or "not-needed"
+            self._clients[provider_key] = AsyncOpenAI(
+                base_url=full_base_url,
+                api_key=api_key,
+                timeout=180.0,
+            )
+        return self._clients[provider_key]
 
     async def close(self):
-        if self._http_client and not self._http_client.is_closed:
-            await self._http_client.aclose()
-            self._http_client = None
+        for key, client in self._clients.items():
+            await client.close()
+        self._clients.clear()
 
     def _resolve_provider(self, model: Optional[str] = None) -> dict:
         config = get_config()
         target_model = model or self.default_model
         return config.resolve_model_provider(target_model)
 
-    def _build_headers(self, provider: dict) -> dict:
-        headers = {"Content-Type": "application/json"}
-        api_key = provider.get("api_key")
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        return headers
-
-    def _build_chat_url(self, provider: dict) -> str:
-        base_url = provider["base_url"].rstrip("/")
-        api_prefix = provider.get("api_prefix", "/v1").rstrip("/")
-        return f"{base_url}{api_prefix}/chat/completions"
+    def _build_extra_body(self, provider: dict, stream: bool, deep_thinking: bool = False) -> dict:
+        """构建 extra_body：星火模型关闭联网搜索，非本地模型流式时包含 stream_options，DeepSeek 思考模式"""
+        extra: dict = {}
+        if provider.get("provider") == "spark":
+            extra["search_disable"] = True
+        if stream and provider.get("provider") != "local":
+            extra["stream_options"] = {"include_usage": True}
+        if provider.get("provider") == "deepseek":
+            if deep_thinking:
+                extra["thinking"] = {"type": "enabled"}
+            else:
+                extra["thinking"] = {"type": "disabled"}
+        return extra or None
 
     async def chat_completion(
         self,
@@ -49,12 +63,14 @@ class LLMClient:
         temperature: Optional[float] = None,
         tools: Optional[list[dict]] = None,
         supports_tools: bool = True,
+        deep_thinking: bool = False,
     ) -> dict:
         """非流式调用LLM（用于本地模型 stream=false + tools）"""
         messages = sanitize_messages(messages, supports_tools=supports_tools)
         provider = self._resolve_provider(model)
-        url = self._build_chat_url(provider)
-        payload: dict = {
+        client = self._get_client(provider)
+
+        kwargs: dict = {
             "model": model or provider["name"],
             "messages": messages,
             "max_tokens": max_tokens or provider.get("max_tokens", 2048),
@@ -64,22 +80,24 @@ class LLMClient:
         # 本地模型（LLaMA-Factory）不会用 chat_template 渲染 tools 参数，
         # 工具格式指令已通过系统提示词注入，不需要传 tools/tool_choice 参数
         if tools and supports_tools and provider.get("provider") != "local":
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-        headers = self._build_headers(provider)
-        logger.debug(f"[DEBUG] 非流式调用参数: url={url}, headers={headers}, payload={json.dumps(payload, ensure_ascii=False)}")
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+
+        extra_body = self._build_extra_body(provider, stream=False, deep_thinking=deep_thinking)
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+
+        logger.debug(f"[DEBUG] 非流式调用参数: model={kwargs.get('model')}, provider={provider.get('provider')}")
 
         try:
-            client = await self._get_http_client()
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            result = response.json()
+            response = await client.chat.completions.create(**kwargs)
+            result = response.model_dump()
             logger.debug(f"[DEBUG] 非流式调用完整返回: {json.dumps(result, ensure_ascii=False)}")
             return result
-        except httpx.HTTPStatusError as e:
-            logger.error(f"LLM非流式调用失败 [{provider['name']}]: {e.response.status_code}")
-            raise RuntimeError(f"LLM非流式调用失败 [{provider['name']}]: {e.response.status_code}") from e
-        except httpx.RequestError as e:
+        except APIStatusError as e:
+            logger.error(f"LLM非流式调用失败 [{provider['name']}]: {e.status_code}")
+            raise RuntimeError(f"LLM非流式调用失败 [{provider['name']}]: {e.status_code}") from e
+        except APIConnectionError as e:
             logger.error(f"LLM非流式调用失败 [{provider['name']}]: {e}")
             if provider.get("provider") == "local":
                 raise RuntimeError(f"本地模型 [{provider['name']}] 不可用，请确认模型服务是否已启动（{provider.get('base_url', '')}）") from e
@@ -93,12 +111,14 @@ class LLMClient:
         temperature: Optional[float] = None,
         tools: Optional[list[dict]] = None,
         supports_tools: bool = True,
-    ) -> AsyncGenerator[str, None]:
+        deep_thinking: bool = False,
+    ) -> AsyncGenerator[dict, None]:
+        """流式调用LLM，yield SDK 解析后的 chunk dict"""
         messages = sanitize_messages(messages, supports_tools=supports_tools)
         provider = self._resolve_provider(model)
-        url = self._build_chat_url(provider)
-        is_local = provider.get("provider") == "local"
-        payload: dict = {
+        client = self._get_client(provider)
+
+        kwargs: dict = {
             "model": model or provider["name"],
             "messages": messages,
             "max_tokens": max_tokens or provider.get("max_tokens", 2048),
@@ -107,37 +127,27 @@ class LLMClient:
         }
         # 仅当模型支持function calling时才发送tools参数
         if tools and supports_tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-        # 星火模型关闭联网搜索
-        if provider.get("provider") == "spark":
-            payload["search_disable"] = True
-        # 非本地模型才发送 stream_options（本地LLaMA Factory不支持）
-        if not is_local:
-            payload["stream_options"] = {"include_usage": True}
-        headers = self._build_headers(provider)
-        logger.debug(f"[DEBUG] 完整调用参数: url={url}, headers={headers}, payload={json.dumps(payload, ensure_ascii=False)}")
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+
+        extra_body = self._build_extra_body(provider, stream=True, deep_thinking=deep_thinking)
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+
+        logger.debug(f"[DEBUG] 流式调用参数: model={kwargs.get('model')}, provider={provider.get('provider')}")
 
         try:
-            client = await self._get_http_client()
-            chunks = []
-            try:
-                async with client.stream("POST", url, json=payload, headers=headers) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if line:
-                            if line.startswith("data: "):
-                                data = line[6:]
-                                if data.strip() == "[DONE]":
-                                    break
-                                chunks.append(data)
-                                yield data
-            finally:
-                logger.debug(f"[DEBUG] 流式调用完整返回: {'|'.join(chunks)}")
-        except httpx.HTTPStatusError as e:
-            logger.error(f"LLM流式调用失败 [{provider['name']}]: {e.response.status_code}")
-            raise RuntimeError(f"LLM流式调用失败 [{provider['name']}]: {e.response.status_code}") from e
-        except (httpx.RequestError, httpx.StreamError) as e:
+            chunks_data = []
+            stream = await client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                chunk_dict = chunk.model_dump()
+                chunks_data.append(chunk_dict)
+                yield chunk_dict
+            logger.debug(f"[DEBUG] 流式调用完整返回: {json.dumps(chunks_data, ensure_ascii=False)}")
+        except APIStatusError as e:
+            logger.error(f"LLM流式调用失败 [{provider['name']}]: {e.status_code}")
+            raise RuntimeError(f"LLM流式调用失败 [{provider['name']}]: {e.status_code}") from e
+        except APIConnectionError as e:
             logger.error(f"LLM流式调用失败 [{provider['name']}]: {e}")
             if provider.get("provider") == "local":
                 raise RuntimeError(f"本地模型 [{provider['name']}] 不可用，请确认模型服务是否已启动（{provider.get('base_url', '')}）") from e

@@ -6,8 +6,8 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-export async function chatCompletionsStream(prompt, sessionId = '', model = 'xop3qwen1b7', onChunk = () => {}, onDone = () => {}, onError = () => {}) {
-  const payload = { session_id: sessionId, model, prompt, stream: true }
+export async function chatCompletionsStream(prompt, sessionId = '', model = 'xop3qwen1b7', deepThinking = false, onChunk = () => {}, onDone = () => {}, onError = () => {}) {
+  const payload = { session_id: sessionId, model, prompt, stream: true, deep_thinking: deepThinking }
 
   try {
     const response = await fetch('/v1/chat/completions', {
@@ -73,6 +73,11 @@ export async function getSession(sessionId) {
 
 export async function deleteSession(sessionId) {
   await api.delete(`/sessions/${sessionId}`)
+}
+
+export async function getToolCalls(messageId) {
+  const { data } = await api.get('/tool-calls', { params: { message_id: messageId } })
+  return data
 }
 
 export async function listModels() {

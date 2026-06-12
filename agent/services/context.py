@@ -22,27 +22,13 @@ def _load_prompt_file(filename: str) -> str:
         return ""
 
 
-# 预加载两套提示词
-# Arch-Agent-3B → system-prompt-local.txt（本地模型使用）
-# xop3qwen1b7 → system-prompt-standard.txt（星火模型使用）
-LOCAL_SYSTEM_PROMPT = _load_prompt_file("system-prompt-local.txt") or "你是一个智能助手，可以帮助用户解答问题。"
-STANDARD_SYSTEM_PROMPT = _load_prompt_file("system-prompt-standard.txt") or LOCAL_SYSTEM_PROMPT
-
-# 模型名到提示词的映射
-_MODEL_PROMPT_MAP = {
-    "Arch-Agent-3B": LOCAL_SYSTEM_PROMPT,
-    "xop3qwen1b7": STANDARD_SYSTEM_PROMPT,
-}
+# 统一使用 system-prompt.txt
+SYSTEM_PROMPT = _load_prompt_file("system-prompt.txt") or "你是一个智能助手，可以帮助用户解答问题。"
 
 
 def get_system_prompt(model: str = "") -> str:
-    """根据模型名称返回对应的系统提示词
-
-    Arch-Agent-3B → system-prompt-local.txt
-    xop3qwen1b7 → system-prompt-standard.txt
-    其他模型 → system-prompt-standard.txt
-    """
-    return _MODEL_PROMPT_MAP.get(model, STANDARD_SYSTEM_PROMPT)
+    """根据模型名称返回对应的系统提示词"""
+    return SYSTEM_PROMPT
 
 
 def sanitize_messages(messages: list[dict], supports_tools: bool = True) -> list[dict]:
@@ -114,7 +100,6 @@ class ContextManager:
             "session_id": session_id,
             "history": history,
             "metadata": {},
-            "tool_results": [],
         }
 
     def build_llm_messages(
@@ -126,11 +111,7 @@ class ContextManager:
         is_local: bool = False,
         model: str = "",
     ) -> list[dict]:
-        """构建发送给LLM的消息列表，包含系统提示词和历史上下文
-
-        文档规范：永远发送完整的 messages 数组，包含所有工具调用和回复
-        本地模型通过 tools 参数传递工具，星火模型将工具描述嵌入系统提示词
-        """
+        """构建发送给LLM的消息列表，包含系统提示词和历史上下文"""
         system_content = get_system_prompt(model)
         if tool_schemas:
             if supports_tools:
@@ -147,7 +128,6 @@ class ContextManager:
         if session_id:
             context = self.get_context(session_id)
             history = context["history"]
-            # 历史消息已包含完整的 tool_calls 和 tool 消息信息
             result.extend(history)
 
         if new_messages:
@@ -185,7 +165,7 @@ class ContextManager:
 
         完全对应 chat_template.jinja 中 tools 分支的渲染逻辑：
         - 工具签名放在 <tools></tools> XML 标签内
-        - 格式指令要求使用 <tool_call></tool_call> XML 标签输出
+        - 格式指令要求使用 <tool_call 标签输出
         """
         tool_texts = []
         for schema in tool_schemas:
@@ -198,8 +178,9 @@ class ContextManager:
             f"You may call one or more functions to assist with the user query.\n\n"
             f"You are provided with function signatures within <tools></tools> XML tags:\n"
             f"<tools>\n{tools_block}\n</tools>\n\n"
-            f'For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n'
-            f'<tool_call>\n{{"name": <function-name>, "arguments": <args-json-object>}}\n</tool_call>'
+            f"For each function call, return a json object with function name and arguments "
+            f"within <tool_call XML tags:\n"
+            f'<tool_call\n{{"name": <function-name>, "arguments": <args-json-object>}}\n</tool_call'
         )
 
 

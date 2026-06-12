@@ -37,17 +37,24 @@ async def _stream_chat_generator(request: ChatRequest):
         temperature=request.temperature,
         session_id=session_id,
         parent_id=user_msg_id,
+        deep_thinking=request.deep_thinking,
     ):
         event_type = event.get("type")
 
         if event_type == "delta":
             yield f"data: {json.dumps({'id': f'msg_{uuid.uuid4().hex[:12]}', 'delta': {'content': event['content']}}, ensure_ascii=False)}\n\n"
 
+        elif event_type == "reasoning_delta":
+            yield f"data: {json.dumps({'id': f'msg_{uuid.uuid4().hex[:12]}', 'reasoning_delta': {'content': event['content']}}, ensure_ascii=False)}\n\n"
+
         elif event_type == "content_replace":
             yield f"data: {json.dumps({'id': f'msg_{uuid.uuid4().hex[:12]}', 'content_replace': {'content': event['content']}}, ensure_ascii=False)}\n\n"
 
         elif event_type == "tool_calls":
             yield f"data: {json.dumps({'tool_calls': event['tool_calls']}, ensure_ascii=False)}\n\n"
+
+        elif event_type == "tool_results":
+            yield f"data: {json.dumps({'tool_results': event['tool_results']}, ensure_ascii=False)}\n\n"
 
         elif event_type == "error":
             yield f"data: {json.dumps({'error': event['error']}, ensure_ascii=False)}\n\n"

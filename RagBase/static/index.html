@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RagBase</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; height: 100vh; display: flex; flex-direction: column; }
+
+  /* Header */
+  .header { background: #1a1a2e; color: #fff; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .header .token-area { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .header input { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 5px 10px; border-radius: 4px; width: 240px; font-size: 13px; }
+  .header input::placeholder { color: rgba(255,255,255,0.5); }
+
+  /* Layout */
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* Sidebar */
+  .sidebar { width: 300px; background: #fff; border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; }
+  .sidebar-header { padding: 16px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+  .sidebar-header h2 { font-size: 15px; font-weight: 600; }
+  .sidebar-header button { background: #4361ee; color: #fff; border: none; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+  .sidebar-header button:hover { background: #3a56d4; }
+  .doc-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .doc-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-radius: 6px; margin-bottom: 4px; background: #f8f9fa; font-size: 13px; }
+  .doc-item:hover { background: #eef0ff; }
+  .doc-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doc-item .chunks { color: #888; font-size: 12px; margin: 0 8px; white-space: nowrap; }
+  .doc-item .del-btn { background: none; border: none; color: #e74c3c; cursor: pointer; font-size: 16px; padding: 0 4px; opacity: 0.5; }
+  .doc-item .del-btn:hover { opacity: 1; }
+  .doc-empty { text-align: center; color: #aaa; padding: 40px 16px; font-size: 13px; }
+
+  /* Chat area */
+  .chat-area { flex: 1; display: flex; flex-direction: column; background: #fafafa; }
+  .chat-messages { flex: 1; overflow-y: auto; padding: 24px; }
+  .msg { margin-bottom: 16px; display: flex; }
+  .msg.user { justify-content: flex-end; }
+  .msg .bubble { max-width: 70%; padding: 10px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .msg.user .bubble { background: #4361ee; color: #fff; border-bottom-right-radius: 4px; }
+  .msg.assistant .bubble { background: #fff; border: 1px solid #e0e0e0; border-bottom-left-radius: 4px; }
+  .msg .sources { margin-top: 6px; font-size: 12px; color: #888; }
+  .msg .sources span { background: #eef0ff; color: #4361ee; padding: 2px 8px; border-radius: 10px; margin-right: 4px; }
+
+  /* Input area */
+  .chat-input { padding: 16px 24px; background: #fff; border-top: 1px solid #e0e0e0; display: flex; gap: 12px; align-items: flex-end; }
+  .chat-input textarea { flex: 1; border: 1px solid #ddd; border-radius: 8px; padding: 10px 14px; font-size: 14px; resize: none; outline: none; min-height: 42px; max-height: 120px; font-family: inherit; line-height: 1.5; }
+  .chat-input textarea:focus { border-color: #4361ee; }
+  .chat-input select { border: 1px solid #ddd; border-radius: 8px; padding: 10px 12px; font-size: 13px; outline: none; background: #fff; cursor: pointer; min-width: 110px; }
+  .chat-input select:focus { border-color: #4361ee; }
+  .chat-input button { background: #4361ee; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; white-space: nowrap; }
+  .chat-input button:hover { background: #3a56d4; }
+  .chat-input button:disabled { background: #aaa; cursor: not-allowed; }
+
+  /* Upload modal */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; justify-content: center; align-items: center; }
+  .modal-overlay.show { display: flex; }
+  .modal { background: #fff; border-radius: 12px; padding: 24px; width: 420px; max-width: 90vw; }
+  .modal h3 { margin-bottom: 16px; font-size: 16px; }
+  .modal .upload-zone { border: 2px dashed #ccc; border-radius: 8px; padding: 32px; text-align: center; color: #888; cursor: pointer; transition: border-color 0.2s; }
+  .modal .upload-zone:hover { border-color: #4361ee; color: #4361ee; }
+  .modal .upload-zone.has-file { border-color: #4361ee; color: #4361ee; }
+  .modal .file-name { margin-top: 8px; font-size: 13px; color: #333; }
+  .modal .actions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 8px; }
+  .modal .actions button { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; }
+  .modal .btn-cancel { background: #eee; color: #333; }
+  .modal .btn-upload { background: #4361ee; color: #fff; }
+  .modal .btn-upload:disabled { background: #aaa; }
+
+  /* Loading dots */
+  .typing { display: inline-flex; gap: 4px; padding: 4px 0; }
+  .typing span { width: 6px; height: 6px; background: #999; border-radius: 50%; animation: blink 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: 0.2s; }
+  .typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink { 0%,80%,100% { opacity: 0.3; } 40% { opacity: 1; } }
+
+  /* API Test Panel */
+  .test-panel { border-top: 1px solid #e0e0e0; background: #fff; }
+  .test-panel-header { padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+  .test-panel-header h3 { font-size: 14px; font-weight: 600; }
+  .test-panel-header .toggle-icon { font-size: 12px; color: #888; transition: transform 0.2s; }
+  .test-panel-header .toggle-icon.collapsed { transform: rotate(-90deg); }
+  .test-panel-body { padding: 0 16px 12px; }
+  .test-panel-body.hidden { display: none; }
+  .test-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .test-btn { padding: 5px 12px; border-radius: 4px; border: 1px solid #ddd; background: #f8f9fa; cursor: pointer; font-size: 12px; transition: all 0.15s; }
+  .test-btn:hover { background: #eef0ff; border-color: #4361ee; color: #4361ee; }
+  .test-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .test-btn.testing { background: #4361ee; color: #fff; border-color: #4361ee; }
+  .test-params { margin-bottom: 10px; }
+  .test-params label { font-size: 12px; color: #666; margin-bottom: 4px; display: block; }
+  .test-params input { width: 100%; border: 1px solid #ddd; border-radius: 4px; padding: 5px 8px; font-size: 12px; outline: none; }
+  .test-params input:focus { border-color: #4361ee; }
+  .test-results { max-height: 300px; overflow-y: auto; }
+  .test-result-item { margin-bottom: 8px; border: 1px solid #eee; border-radius: 6px; overflow: hidden; }
+  .test-result-header { padding: 6px 10px; font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .test-result-header.ok { background: #e8f5e9; color: #2e7d32; }
+  .test-result-header.error { background: #fdecea; color: #c62828; }
+  .test-result-header .time { font-weight: 400; color: #888; }
+  .test-result-body { padding: 8px 10px; font-size: 12px; background: #fafafa; white-space: pre-wrap; word-break: break-all; max-height: 150px; overflow-y: auto; font-family: 'Consolas', 'Monaco', monospace; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>RagBase</h1>
+  <div class="token-area">
+    <span>Upload Token:</span>
+    <input type="password" id="tokenInput" placeholder="输入 UPLOAD_TOKEN...">
+  </div>
+</div>
+
+<div class="main">
+  <!-- Sidebar: Document Management -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h2>文档库</h2>
+      <button onclick="showUploadModal()">+ 上传</button>
+    </div>
+    <div class="doc-list" id="docList">
+      <div class="doc-empty">暂无文档，点击上传添加</div>
+    </div>
+    <!-- API Test Panel -->
+    <div class="test-panel">
+      <div class="test-panel-header" onclick="toggleTestPanel()">
+        <h3>API 接口测试</h3>
+        <span class="toggle-icon collapsed" id="testToggleIcon">&#9660;</span>
+      </div>
+      <div class="test-panel-body hidden" id="testPanelBody">
+        <div class="test-btns">
+          <button class="test-btn" onclick="runTest('health')">Health</button>
+          <button class="test-btn" onclick="runTest('documents')">Documents</button>
+          <button class="test-btn" onclick="runTest('search')">Search</button>
+          <button class="test-btn" onclick="runTest('chat')">Chat</button>
+          <button class="test-btn" onclick="runTest('all')" style="background:#4361ee;color:#fff;border-color:#4361ee;">全部测试</button>
+        </div>
+        <div class="test-params">
+          <label>测试查询语句 (Search/Chat)</label>
+          <input type="text" id="testQuery" placeholder="输入测试查询..." value="你好">
+        </div>
+        <div class="test-results" id="testResults"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chat Area -->
+  <div class="chat-area">
+    <div class="chat-messages" id="chatMessages">
+      <div class="msg assistant">
+        <div class="bubble">你好！我是 RagBase 知识问答助手。上传文档后，你可以向我提问，我会基于文档内容为你解答。</div>
+      </div>
+    </div>
+    <div class="chat-input">
+      <select id="modelSelect"></select>
+      <textarea id="queryInput" rows="1" placeholder="输入你的问题..." onkeydown="handleKey(event)"></textarea>
+      <button id="sendBtn" onclick="sendChat()">发送</button>
+    </div>
+  </div>
+</div>
+
+<!-- Upload Modal -->
+<div class="modal-overlay" id="uploadModal">
+  <div class="modal">
+    <h3>上传文档</h3>
+    <div class="upload-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <div>点击选择文件 或 拖拽到此处</div>
+      <div style="font-size:12px;margin-top:4px;">支持 .txt .md</div>
+    </div>
+    <input type="file" id="fileInput" accept=".txt,.md" style="display:none" onchange="onFileSelected(event)">
+    <div class="file-name" id="fileName"></div>
+    <div class="actions">
+      <button class="btn-cancel" onclick="hideUploadModal()">取消</button>
+      <button class="btn-upload" id="uploadBtn" onclick="uploadFile()" disabled>上传</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';  // same origin
+let selectedFile = null;
+
+// ---- Models ----
+function initModels() {
+  const select = document.getElementById('modelSelect');
+  select.innerHTML = `
+    <option value="spark" selected>星火模型 (xop3qwen1b7)</option>
+    <option value="local">本地模型 (Arch-Agent-3B)</option>
+  `;
+}
+
+// ---- Documents ----
+async function loadDocuments() {
+  try {
+    const res = await fetch(`${API}/v1/documents`);
+    const json = await res.json();
+    const list = json.data || [];
+    const el = document.getElementById('docList');
+    if (list.length === 0) {
+      el.innerHTML = '<div class="doc-empty">暂无文档，点击上传添加</div>';
+      return;
+    }
+    el.innerHTML = list.map(d => `
+      <div class="doc-item">
+        <span class="name" title="${d.filename}">${d.filename}</span>
+        <span class="chunks">${d.chunks} 块</span>
+        <button class="del-btn" title="删除" onclick="deleteDoc('${d.filename}')">&times;</button>
+      </div>
+    `).join('');
+  } catch (e) {
+    console.error('加载文档列表失败', e);
+  }
+}
+
+async function deleteDoc(filename) {
+  if (!confirm(`确定删除 "${filename}" 吗？`)) return;
+  try {
+    await fetch(`${API}/v1/documents?filename=${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    loadDocuments();
+  } catch (e) {
+    alert('删除失败: ' + e.message);
+  }
+}
+
+// ---- Upload ----
+function showUploadModal() { document.getElementById('uploadModal').classList.add('show'); }
+function hideUploadModal() {
+  document.getElementById('uploadModal').classList.remove('show');
+  selectedFile = null;
+  document.getElementById('fileInput').value = '';
+  document.getElementById('fileName').textContent = '';
+  document.getElementById('uploadBtn').disabled = true;
+  document.getElementById('dropZone').classList.remove('has-file');
+}
+
+function onFileSelected(e) {
+  selectedFile = e.target.files[0];
+  if (selectedFile) {
+    document.getElementById('fileName').textContent = selectedFile.name;
+    document.getElementById('uploadBtn').disabled = false;
+    document.getElementById('dropZone').classList.add('has-file');
+  }
+}
+
+async function uploadFile() {
+  if (!selectedFile) return;
+  const token = document.getElementById('tokenInput').value.trim();
+  if (!token) { alert('请先填写 Upload Token'); return; }
+  const btn = document.getElementById('uploadBtn');
+  btn.disabled = true;
+  btn.textContent = '上传中...';
+  try {
+    const fd = new FormData();
+    fd.append('file', selectedFile);
+    const res = await fetch(`${API}/v1/upload`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: fd,
+    });
+    const json = await res.json();
+    if (json.code !== 0) { alert(json.detail || json.message || '上传失败'); return; }
+    hideUploadModal();
+    loadDocuments();
+  } catch (e) {
+    alert('上传失败: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '上传';
+  }
+}
+
+// Drag & drop
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('has-file'); });
+dropZone.addEventListener('dragleave', () => { if (!selectedFile) dropZone.classList.remove('has-file'); });
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  const file = e.dataTransfer.files[0];
+  if (file && /\.(txt|md)$/i.test(file.name)) {
+    selectedFile = file;
+    document.getElementById('fileName').textContent = file.name;
+    document.getElementById('uploadBtn').disabled = false;
+    dropZone.classList.add('has-file');
+  }
+});
+
+// ---- Chat ----
+function appendMsg(role, content, sources) {
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  let html = `<div class="bubble">${escapeHtml(content)}`;
+  if (sources && sources.length) {
+    html += `<div class="sources">${sources.map(s => `<span>${escapeHtml(s)}</span>`).join('')}</div>`;
+  }
+  html += '</div>';
+  div.innerHTML = html;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function appendTyping() {
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'msg assistant';
+  div.id = 'typingMsg';
+  div.innerHTML = '<div class="bubble"><div class="typing"><span></span><span></span><span></span></div></div>';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function removeTyping() {
+  const el = document.getElementById('typingMsg');
+  if (el) el.remove();
+}
+
+async function sendChat() {
+  const input = document.getElementById('queryInput');
+  const query = input.value.trim();
+  if (!query) return;
+  input.value = '';
+  autoResize(input);
+  appendMsg('user', query);
+  const btn = document.getElementById('sendBtn');
+  btn.disabled = true;
+  appendTyping();
+  try {
+    const res = await fetch(`${API}/v1/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, model: document.getElementById('modelSelect').value }),
+    });
+    const json = await res.json();
+    removeTyping();
+    if (json.code === 0) {
+      appendMsg('assistant', json.data.answer, json.data.sources);
+    } else if (json.detail) {
+      appendMsg('assistant', '出错了: ' + json.detail);
+    } else {
+      appendMsg('assistant', '出错了: ' + (json.message || '未知错误'));
+    }
+  } catch (e) {
+    removeTyping();
+    appendMsg('assistant', '请求失败: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+
+// ---- Utils ----
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+document.getElementById('queryInput').addEventListener('input', function() { autoResize(this); });
+
+// Init
+initModels();
+loadDocuments();
+
+// ---- API Test ----
+let testRunning = false;
+
+function toggleTestPanel() {
+  const body = document.getElementById('testPanelBody');
+  const icon = document.getElementById('testToggleIcon');
+  body.classList.toggle('hidden');
+  icon.classList.toggle('collapsed');
+}
+
+async function runTest(target) {
+  if (testRunning) return;
+  testRunning = true;
+  const query = document.getElementById('testQuery').value.trim() || '你好';
+  const resultsEl = document.getElementById('testResults');
+
+  // 禁用所有按钮
+  const btns = document.querySelectorAll('.test-btn');
+  btns.forEach(b => { b.disabled = true; if (b.textContent.toLowerCase().includes(target === 'all' ? '全部' : target.substring(0,4))) b.classList.add('testing'); });
+
+  // 显示加载
+  const loadingId = 'test-loading-' + Date.now();
+  resultsEl.innerHTML = `<div id="${loadingId}" class="test-result-item"><div class="test-result-header" style="background:#eef0ff;color:#4361ee;">测试中...</div><div class="test-result-body">正在执行 ${target} 测试，请稍候...</div></div>` + resultsEl.innerHTML;
+
+  try {
+    const res = await fetch(`${API}/v1/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target, params: { query, top_k: 3, model: document.getElementById('modelSelect').value } }),
+    });
+    const json = await res.json();
+    const loadingEl = document.getElementById(loadingId);
+    if (loadingEl) loadingEl.remove();
+
+    if (json.code === 0) {
+      const data = json.data;
+      let html = '';
+      for (const [name, result] of Object.entries(data)) {
+        const isOk = result.status === 'ok';
+        const timeMs = result.response_time_ms || json.elapsed_ms;
+        html += `<div class="test-result-item">
+          <div class="test-result-header ${isOk ? 'ok' : 'error'}">
+            <span>${name.toUpperCase()} - ${isOk ? '通过' : '失败'}</span>
+            <span class="time">${timeMs}ms</span>
+          </div>
+          <div class="test-result-body">${formatTestResult(name, result)}</div>
+        </div>`;
+      }
+      resultsEl.innerHTML = html + resultsEl.innerHTML;
+    } else {
+      resultsEl.innerHTML = `<div class="test-result-item"><div class="test-result-header error">测试失败</div><div class="test-result-body">${escapeHtml(json.message || '未知错误')}</div></div>` + resultsEl.innerHTML;
+    }
+  } catch (e) {
+    const loadingEl = document.getElementById(loadingId);
+    if (loadingEl) loadingEl.remove();
+    resultsEl.innerHTML = `<div class="test-result-item"><div class="test-result-header error">请求失败</div><div class="test-result-body">${escapeHtml(e.message)}</div></div>` + resultsEl.innerHTML;
+  } finally {
+    testRunning = false;
+    btns.forEach(b => { b.disabled = false; b.classList.remove('testing'); });
+  }
+}
+
+function formatTestResult(name, result) {
+  if (result.status === 'error') {
+    return '错误: ' + escapeHtml(result.error);
+  }
+  switch (name) {
+    case 'health':
+      return '服务状态: OK';
+    case 'documents':
+      return `文档数量: ${result.count}\n${result.documents.map(d => `  - ${d.filename} (${d.chunks} 块)`).join('\n')}`;
+    case 'search':
+      return `查询: ${result.query}\n返回结果: ${result.result_count} 条\n${result.results.map((r, i) => `  [${i+1}] 来源: ${r.metadata.filename} | 距离: ${r.score.toFixed(4)}\n      ${r.content.substring(0, 100)}...`).join('\n')}`;
+    case 'chat':
+      return `查询: ${result.query}\n来源: ${result.sources.join(', ') || '无'}\n回答:\n${result.answer}`;
+    default:
+      return JSON.stringify(result, null, 2);
+  }
+}
+</script>
+</body>
+</html>
