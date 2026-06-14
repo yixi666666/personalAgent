@@ -29,10 +29,6 @@ class Config:
         return self.server.get("port", 8003)
 
     @property
-    def server_reload(self) -> bool:
-        return self.server.get("reload", True)
-
-    @property
     def logging(self) -> dict:
         return self._data.get("logging", {})
 

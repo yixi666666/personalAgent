@@ -103,6 +103,7 @@ class ChatService:
         format_retry_count = 0
 
         for _round in range(MAX_TOOL_ROUNDS):
+            round_num = _round + 1
             control = None
 
             if is_local and supports_tools:
@@ -116,6 +117,7 @@ class ChatService:
                     supports_tools=supports_tools,
                     format_retry_count=format_retry_count,
                     deep_thinking=deep_thinking,
+                    round_num=round_num,
                 )
             else:
                 gen = self._call_stream(
@@ -127,6 +129,7 @@ class ChatService:
                     parent_id=current_parent_id,
                     supports_tools=supports_tools,
                     deep_thinking=deep_thinking,
+                    round_num=round_num,
                 )
 
             async for item in gen:
@@ -160,6 +163,7 @@ class ChatService:
         parent_id: Optional[str] = None,
         supports_tools: bool = True,
         deep_thinking: bool = False,
+        round_num: int = 1,
     ) -> AsyncGenerator[dict | _Control, None]:
         """流式调用LLM，实时 yield 事件，结束时 yield _Control 控制信号"""
         tools = None
@@ -171,6 +175,9 @@ class ChatService:
         full_content = ""
         full_reasoning = ""
         tool_calls_buffer = []
+        usage_data = {}
+        model_name = ""
+        round_prefix = f"【第{round_num}轮】" if round_num == 1 else f"[第{round_num}轮]"
 
         async for chunk in llm_client.chat_stream(
             messages=messages,
@@ -180,7 +187,14 @@ class ChatService:
             tools=tools,
             supports_tools=supports_tools,
             deep_thinking=deep_thinking,
+            round_num=round_num,
         ):
+            # 收集 usage 和 model
+            if chunk.get("usage"):
+                usage_data = chunk["usage"]
+            if chunk.get("model"):
+                model_name = chunk["model"]
+
             choices = chunk.get("choices", [])
             if not choices:
                 continue
@@ -215,6 +229,22 @@ class ChatService:
                         tool_calls_buffer[idx]["function"]["arguments"] += tc["function"]["arguments"]
 
             if finish_reason:
+                # 记录模型返回日志（与非流式格式一致）
+                complete_response = {
+                    "choices": [{
+                        "finish_reason": finish_reason,
+                        "message": {"content": full_content, "role": "assistant"},
+                    }],
+                    "usage": usage_data,
+                }
+                if model_name:
+                    complete_response["model"] = model_name
+                if full_reasoning:
+                    complete_response["choices"][0]["message"]["reasoning_content"] = full_reasoning
+                if tool_calls_buffer:
+                    complete_response["choices"][0]["message"]["tool_calls"] = tool_calls_buffer
+                logger.debug(f"{round_prefix} 模型返回 <<< {json.dumps(complete_response, ensure_ascii=False)}")
+
                 if finish_reason == "tool_calls" and tool_calls_buffer:
                     # 按文档流程：存储 assistant 消息 + message_contents(reasoning + tool_call) + tool_calls(pending)
                     session_manager = get_session_manager()
@@ -259,6 +289,7 @@ class ChatService:
 
                     elif parse_errors:
                         # 按文档：参数校验异常时，终止回答用户问题
+                        logger.debug(f"[工具参数校验异常] model={model}, 模型输出={full_content}, 异常原因={'; '.join(parse_errors)}")
                         session_manager = get_session_manager()
                         assistant_msg = session_manager.add_message(
                             session_id=session_id,
@@ -294,6 +325,16 @@ class ChatService:
                 return
 
         # 流正常结束但没有finish_reason
+        complete_response = {
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {"content": full_content, "role": "assistant"},
+            }],
+            "usage": usage_data,
+        }
+        if model_name:
+            complete_response["model"] = model_name
+        logger.debug(f"{round_prefix} 模型返回 <<< {json.dumps(complete_response, ensure_ascii=False)}")
         if full_content:
             session_manager = get_session_manager()
             session_manager.add_message(
@@ -320,6 +361,7 @@ class ChatService:
         supports_tools: bool = True,
         format_retry_count: int = 0,
         deep_thinking: bool = False,
+        round_num: int = 1,
     ) -> AsyncGenerator[dict | _Control, None]:
         """非流式调用LLM（用于本地模型 stream=false + tools）"""
         tool_manager = get_tool_manager()
@@ -334,6 +376,7 @@ class ChatService:
             tools=tools,
             supports_tools=supports_tools,
             deep_thinking=deep_thinking,
+            round_num=round_num,
         )
 
         choices = response.get("choices", [])
@@ -405,6 +448,7 @@ class ChatService:
 
             elif parse_errors:
                 # 按文档：参数校验异常时，终止回答用户问题
+                logger.debug(f"[工具参数校验异常] model={model}, 模型输出={content}, 异常原因={'; '.join(parse_errors)}")
                 MAX_FORMAT_RETRIES = 2
                 if format_retry_count >= MAX_FORMAT_RETRIES:
                     error_msg = "模型多次输出非规范工具调用格式，已停止重试。错误详情：" + "; ".join(parse_errors)

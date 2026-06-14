@@ -37,40 +37,19 @@
     </div>
 
     <div class="sidebar-footer">
-      <div class="model-selector">
-        <span class="model-label">模型</span>
-        <el-select v-model="chatStore.currentModel" size="small" style="width: 100%">
-          <el-option
-            v-for="m in chatStore.models"
-            :key="m.id"
-            :label="m.name"
-            :value="m.id"
-          />
-        </el-select>
-      </div>
-      <div v-if="isDeepSeekModel" class="deep-thinking-toggle">
-        <span class="toggle-label">深度思考</span>
-        <el-switch
-          v-model="chatStore.deepThinking"
-          size="small"
-          active-text="开"
-          inactive-text="关"
-        />
+      <div class="user-profile">
+        <el-avatar :size="36" style="background: #409eff">忆</el-avatar>
+        <span class="user-nickname">忆昔</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
 import { Plus, Delete, ChatDotRound } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 
 const chatStore = useChatStore()
-
-const isDeepSeekModel = computed(() => {
-  return chatStore.currentModel.startsWith('deepseek')
-})
 </script>
 
 <style scoped>
@@ -91,6 +70,18 @@ const isDeepSeekModel = computed(() => {
 
 .new-chat-btn {
   width: 100%;
+}
+
+.user-profile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-nickname {
+  font-size: 13px;
+  font-weight: 500;
+  color: #303133;
 }
 
 .session-list {
@@ -162,31 +153,7 @@ const isDeepSeekModel = computed(() => {
 }
 
 .sidebar-footer {
-  padding: 12px 16px;
+  padding: 8px 16px;
   border-top: 1px solid #e4e7ed;
-}
-
-.model-selector {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.model-label {
-  font-size: 12px;
-  color: #606266;
-  white-space: nowrap;
-}
-
-.deep-thinking-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 10px;
-}
-
-.toggle-label {
-  font-size: 12px;
-  color: #606266;
 }
 </style>

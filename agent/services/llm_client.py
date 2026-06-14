@@ -64,6 +64,7 @@ class LLMClient:
         tools: Optional[list[dict]] = None,
         supports_tools: bool = True,
         deep_thinking: bool = False,
+        round_num: int = 1,
     ) -> dict:
         """非流式调用LLM（用于本地模型 stream=false + tools）"""
         messages = sanitize_messages(messages, supports_tools=supports_tools)
@@ -87,12 +88,13 @@ class LLMClient:
         if extra_body:
             kwargs["extra_body"] = extra_body
 
-        logger.debug(f"[DEBUG] 非流式调用参数: model={kwargs.get('model')}, provider={provider.get('provider')}")
+        round_prefix = f"【第{round_num}轮】" if round_num == 1 else f"[第{round_num}轮]"
+        logger.debug(f"{round_prefix} 模型调用 >>> kwargs={json.dumps(kwargs, ensure_ascii=False)}")
 
         try:
             response = await client.chat.completions.create(**kwargs)
             result = response.model_dump()
-            logger.debug(f"[DEBUG] 非流式调用完整返回: {json.dumps(result, ensure_ascii=False)}")
+            logger.debug(f"{round_prefix} 模型返回 <<< {json.dumps(result, ensure_ascii=False)}")
             return result
         except APIStatusError as e:
             logger.error(f"LLM非流式调用失败 [{provider['name']}]: {e.status_code}")
@@ -112,6 +114,7 @@ class LLMClient:
         tools: Optional[list[dict]] = None,
         supports_tools: bool = True,
         deep_thinking: bool = False,
+        round_num: int = 1,
     ) -> AsyncGenerator[dict, None]:
         """流式调用LLM，yield SDK 解析后的 chunk dict"""
         messages = sanitize_messages(messages, supports_tools=supports_tools)
@@ -134,16 +137,14 @@ class LLMClient:
         if extra_body:
             kwargs["extra_body"] = extra_body
 
-        logger.debug(f"[DEBUG] 流式调用参数: model={kwargs.get('model')}, provider={provider.get('provider')}")
+        round_prefix = f"【第{round_num}轮】" if round_num == 1 else f"[第{round_num}轮]"
+        logger.debug(f"{round_prefix} 模型调用 >>> kwargs={json.dumps(kwargs, ensure_ascii=False)}")
 
         try:
-            chunks_data = []
             stream = await client.chat.completions.create(**kwargs)
             async for chunk in stream:
                 chunk_dict = chunk.model_dump()
-                chunks_data.append(chunk_dict)
                 yield chunk_dict
-            logger.debug(f"[DEBUG] 流式调用完整返回: {json.dumps(chunks_data, ensure_ascii=False)}")
         except APIStatusError as e:
             logger.error(f"LLM流式调用失败 [{provider['name']}]: {e.status_code}")
             raise RuntimeError(f"LLM流式调用失败 [{provider['name']}]: {e.status_code}") from e

@@ -29,10 +29,6 @@ class Config:
         return self.server.get("port", 8002)
 
     @property
-    def server_reload(self) -> bool:
-        return self.server.get("reload", True)
-
-    @property
     def default_model(self) -> str:
         return self._data.get("default_model", "xop3qwen1b7")
 
@@ -67,7 +63,7 @@ class Config:
     @property
     def log_format(self) -> str:
         return self.logging.get(
-            "format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            "format", "%(asctime)s - %(name)-20s - %(levelname)s - %(message)s"
         )
 
     @property
