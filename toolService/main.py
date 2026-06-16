@@ -76,4 +76,10 @@ def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    registry = get_tool_registry()
+    tool_states = await registry.health_check_all()
+    unhealthy = [name for name, state in tool_states.items() if state != "running"]
+    return {
+        "status": "healthy" if not unhealthy else "degraded",
+        "tools": tool_states,
+    }
