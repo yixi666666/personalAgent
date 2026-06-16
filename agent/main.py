@@ -8,6 +8,18 @@ from agent.routers import chat, sessions, models
 from agent.services.tool_manager import get_tool_manager
 from agent.services.llm_client import get_llm_client
 
+
+class FixedWidthFormatter(logging.Formatter):
+    """自定义日志格式器：将 name 字段截断/补齐到固定宽度"""
+    def __init__(self, fmt=None, datefmt=None, style='%', name_width=20):
+        super().__init__(fmt, datefmt, style)
+        self.name_width = name_width
+
+    def format(self, record):
+        record.name = record.name[:self.name_width].ljust(self.name_width)
+        return super().format(record)
+
+
 # 在模块导入阶段就配置日志，确保所有logger都能输出DEBUG级别
 _config = get_config()
 logging.basicConfig(
@@ -15,12 +27,26 @@ logging.basicConfig(
     format=_config.log_format,
     force=True,
 )
+# 替换所有 handler 的 formatter 为 FixedWidthFormatter
+_name_width = 20
+for handler in logging.getLogger().handlers:
+    handler.setFormatter(FixedWidthFormatter(_config.log_format, name_width=_name_width))
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = get_config()
+    # uvicorn reload 模式会覆盖 logging.basicConfig，这里重新配置
+    log_level = getattr(logging, config.log_level, logging.INFO)
+    logging.getLogger("agent").setLevel(log_level)
+    # 确保 agent 下所有 logger 的 handler 级别和格式也正确
+    for handler in logging.getLogger().handlers:
+        if handler.level > log_level:
+            handler.setLevel(log_level)
+        handler.setFormatter(FixedWidthFormatter(config.log_format, name_width=_name_width))
+
     logger = logging.getLogger(__name__)
     logger.info("正在初始化数据库...")
     init_db()

@@ -171,7 +171,7 @@ class ContextManager:
         for schema in tool_schemas:
             tool_texts.append(json.dumps(schema, ensure_ascii=False))
 
-        tools_block = "\n".join(tool_texts)
+        tools_block = "\n\n".join(tool_texts)
 
         return (
             f"\n\n# Tools\n\n"

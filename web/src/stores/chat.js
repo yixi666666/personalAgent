@@ -246,6 +246,7 @@ export const useChatStore = defineStore('chat', () => {
           streaming.value = false
           loading.value = false
           messages.value[assistantIdx].isStreaming = false
+          messages.value[assistantIdx]._wasStreaming = true
           streamingContent.value = ''
           streamingReasoning.value = ''
           loadSessionsData()
@@ -257,6 +258,7 @@ export const useChatStore = defineStore('chat', () => {
           const blocks = messages.value[assistantIdx].blocks
           blocks.push({ type: 'text', content: `错误: ${error}` })
           messages.value[assistantIdx].isStreaming = false
+          messages.value[assistantIdx]._wasStreaming = true
           streamingContent.value = ''
           streamingReasoning.value = ''
         }
@@ -267,6 +269,7 @@ export const useChatStore = defineStore('chat', () => {
       const blocks = messages.value[assistantIdx].blocks
       blocks.push({ type: 'text', content: `请求失败: ${err.message}` })
       messages.value[assistantIdx].isStreaming = false
+      messages.value[assistantIdx]._wasStreaming = true
       streamingContent.value = ''
       streamingReasoning.value = ''
     }

@@ -41,5 +41,4 @@ if __name__ == "__main__":
         "app.main:app",
         host=config["server"]["host"],
         port=config["server"]["port"],
-        reload=False,
     )

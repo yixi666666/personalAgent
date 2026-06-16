@@ -67,7 +67,6 @@ class RagSearchTool:
         if not data:
             return "未检索到相关文档"
 
-        import json
         results = []
         for item in data:
             results.append({
@@ -76,4 +75,4 @@ class RagSearchTool:
                 "score": item.get("score", 0),
             })
 
-        return json.dumps(results, ensure_ascii=False)
+        return results

@@ -1,17 +1,24 @@
 <template>
   <div class="app-container">
-    <SessionList class="app-sidebar" />
-    <ChatArea class="app-main" />
+    <div class="app-sidebar" :class="{ collapsed: sidebarCollapsed }">
+      <SessionList v-show="!sidebarCollapsed" />
+    </div>
+    <div class="app-main">
+      <ChatArea />
+    </div>
   </div>
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { ref, onMounted, provide } from 'vue'
 import SessionList from './components/SessionList.vue'
 import ChatArea from './components/ChatArea.vue'
 import { useChatStore } from './stores/chat'
 
 const chatStore = useChatStore()
+const sidebarCollapsed = ref(false)
+
+provide('sidebarCollapsed', sidebarCollapsed)
 
 onMounted(() => {
   chatStore.loadSessions()
@@ -35,6 +42,11 @@ onMounted(() => {
   flex-shrink: 0;
   height: 100%;
   overflow: hidden !important;
+  transition: width 0.3s ease;
+}
+
+.app-sidebar.collapsed {
+  width: 0;
 }
 
 .app-main {

@@ -18,7 +18,7 @@ def main():
         "agent.main:app",
         host=config.server_host,
         port=config.server_port,
-        reload=config.server_reload,
+        log_level=config.log_level.lower(),
     )
 
 
