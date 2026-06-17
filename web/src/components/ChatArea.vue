@@ -218,7 +218,13 @@ const sidebarCollapsed = inject('sidebarCollapsed')
 const messages = computed(() => chatStore.messages)
 
 const isDeepThinkModel = computed(() => {
-  return chatStore.currentModel.startsWith('deepseek')
+  const model = chatStore.models.find(m => m.id === chatStore.currentModel)
+  return model?.capabilities?.deep_thinking === true
+})
+
+// 切换模型时，如果新模型不支持深度思考，自动关闭
+watch(isDeepThinkModel, (val) => {
+  if (!val) chatStore.deepThinking = false
 })
 
 /**

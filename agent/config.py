@@ -99,6 +99,13 @@ class Config:
                 "temperature": provider_cfg.get("temperature", 0.7),
                 "api_key": provider_cfg.get("api_key"),
                 "supports_tools": provider_cfg.get("supports_tools", True),
+                "deep_thinking": provider_cfg.get("deep_thinking", False),
+                "web_search": provider_cfg.get("web_search", False),
+                "structured_output": provider_cfg.get("structured_output", False),
+                "multimodal": provider_cfg.get("multimodal", False),
+                "streaming": provider_cfg.get("streaming", True),
+                "stop_anytime": provider_cfg.get("stop_anytime", True),
+                "context_window": provider_cfg.get("context_window", 4096),
             })
         return result
 

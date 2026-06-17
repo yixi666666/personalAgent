@@ -12,12 +12,24 @@ class ChatRequest(BaseModel):
     deep_thinking: bool = Field(default=False, description="是否开启深度思考模式（仅DeepSeek模型支持）")
 
 
+class ModelCapabilities(BaseModel):
+    deep_thinking: bool = False
+    web_search: bool = False
+    structured_output: bool = False
+    multimodal: bool = False
+    streaming: bool = True
+    stop_anytime: bool = True
+    tool_calling: bool = True
+    context_window: int = 4096
+
+
 class ModelInfo(BaseModel):
     id: str
     name: str
     description: str
     provider: str = "local"
     status: str = "available"
+    capabilities: ModelCapabilities = ModelCapabilities()
 
 
 class ModelListResponse(BaseModel):

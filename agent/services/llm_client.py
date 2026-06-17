@@ -42,13 +42,13 @@ class LLMClient:
         return config.resolve_model_provider(target_model)
 
     def _build_extra_body(self, provider: dict, stream: bool, deep_thinking: bool = False) -> dict:
-        """构建 extra_body：星火模型关闭联网搜索，非本地模型流式时包含 stream_options，DeepSeek 思考模式"""
+        """构建 extra_body：星火模型关闭联网搜索，非本地模型流式时包含 stream_options，DeepSeek/GLM 思考模式"""
         extra: dict = {}
         if provider.get("provider") == "spark":
             extra["search_disable"] = True
         if stream and provider.get("provider") != "local":
             extra["stream_options"] = {"include_usage": True}
-        if provider.get("provider") == "deepseek":
+        if provider.get("provider") in ("deepseek", "glm"):
             if deep_thinking:
                 extra["thinking"] = {"type": "enabled"}
             else:
