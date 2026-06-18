@@ -1,0 +1,87 @@
+server:
+  host: "0.0.0.0"
+  port: 8002
+
+default_model: "xop3qwen1b7"
+
+database:
+  path: "./data/chatAgent.sqlite"
+  echo: false
+
+logging:
+  level: "DEBUG"
+  format: "%(asctime)s - %(name)-20s - %(levelname)s - %(message)s"
+
+toolservice:
+  url: "http://localhost:8003"
+  refresh_interval: 300
+  call_timeout: 10
+
+providers:
+  deepseek:
+    name: "deepseek-v4-flash"
+    display_name: "DeepSeek Flash"
+    base_url: "https://api.deepseek.com"
+    api_prefix: ""
+    max_tokens: 4096
+    temperature: 0.7
+    api_key: "@format {env[DEEPSEEK_API_KEY]}"
+    supports_tools: true
+    deep_thinking: true
+    web_search: false
+    structured_output: true
+    multimodal: false
+    streaming: true
+    stop_anytime: true
+    context_window: 1000000       # 1M
+
+  local:
+    name: "Arch-Agent-3B"
+    display_name: "本地模型"
+    base_url: "http://localhost:8000"
+    api_prefix: "/v1"
+    max_tokens: 4096
+    temperature: 0.7
+    api_key: null
+    supports_tools: true
+    deep_thinking: false
+    web_search: false
+    structured_output: false
+    multimodal: false
+    streaming: true
+    stop_anytime: true
+    context_window: 32768         # 32.8K
+
+  spark:
+    name: "xop3qwen1b7"
+    display_name: "星火模型"
+    base_url: "https://maas-api.cn-huabei-1.xf-yun.com"
+    api_prefix: "/v2"
+    max_tokens: 4096
+    temperature: 0.7
+    api_key: "@format {env[SPARK_API_KEY]}"
+    supports_tools: false
+    deep_thinking: false
+    web_search: true
+    structured_output: false
+    multimodal: false
+    streaming: true
+    stop_anytime: true
+    context_window: 8192          # 8.2K
+
+  glm:
+    name: "glm-4.7-flash"
+    display_name: "GLM-4.7 Flash"
+    base_url: "https://open.bigmodel.cn/api/paas"
+    api_prefix: "/v4"
+    max_tokens: 4096
+    temperature: 0.7
+    api_key: "@format {env[GLM_API_KEY]}"
+    supports_tools: true
+    deep_thinking: true
+    web_search: false
+    structured_output: true
+    multimodal: false
+    streaming: true
+    stop_anytime: true
+    context_window: 128000        # 128K

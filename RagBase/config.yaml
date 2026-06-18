@@ -1,0 +1,43 @@
+# RagBase 配置文件
+
+server:
+  host: "0.0.0.0"
+  port: 8004
+
+embedding:
+  model_name: "./model_cache/bge-small-zh-v1.5"
+
+chunking:
+  chunk_size: 500
+  chunk_overlap: 100
+  separators:
+    - "\n\n"
+    - "\n"
+    - "。"
+    - "，"
+    - " "
+
+vectorstore:
+  persist_directory: "./chroma_db"
+
+upload:
+  max_memory_size: 1048576  # 1MB，超过此大小先保存到临时文件
+  temp_directory: "./temp_uploads"
+  allowed_extensions:
+    - ".txt"
+    - ".md"
+  token: "@format {env[RAGBASE_UPLOAD_TOKEN]}"
+
+llm:
+  default: "spark"  # spark 或 local
+  spark:
+    base_url: "https://maas-api.cn-huabei-1.xf-yun.com/v2"
+    model: "xop3qwen1b7"
+    api_key: "@format {env[SPARK_API_KEY]}"
+  local:
+    base_url: "http://localhost:8000/v1"
+    model: "Arch-Agent-3B"
+
+search:
+  top_k: 5
+  score_threshold: 1.5  # Chroma L2 距离阈值，越小越相似，超过此值的结果将被过滤

@@ -18,9 +18,6 @@ model_cache/
 # 临时上传文件
 temp_uploads/
 
-# 配置文件
-config.yaml
-
 # 环境变量
 .env
 

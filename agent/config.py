@@ -1,45 +1,43 @@
-import yaml
 import os
 from typing import Any, Optional
+from dynaconf import Dynaconf
 
 
 _config_instance: Optional["Config"] = None
 
+_base_dir = os.path.dirname(os.path.abspath(__file__))
+
+_settings = Dynaconf(
+    settings_files=[os.path.join(_base_dir, "config.yaml")],
+    load_dotenv=True,
+    dotenv_path=os.path.join(_base_dir, ".env"),
+)
+
 
 class Config:
-    def __init__(self, config_path: str = None):
-        if config_path is None:
-            config_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                "config.yaml",
-            )
-        with open(config_path, "r", encoding="utf-8") as f:
-            self._data = yaml.safe_load(f)
-
     @property
     def server(self) -> dict:
-        return self._data.get("server", {})
+        return _settings.get("server", {})
 
     @property
     def server_host(self) -> str:
-        return self.server.get("host", "0.0.0.0")
+        return _settings.get("server", {}).get("host", "0.0.0.0")
 
     @property
     def server_port(self) -> int:
-        return self.server.get("port", 8002)
+        return _settings.get("server", {}).get("port", 8002)
 
     @property
     def default_model(self) -> str:
-        return self._data.get("default_model", "xop3qwen1b7")
+        return _settings.get("default_model", "xop3qwen1b7")
 
     @property
     def database(self) -> dict:
-        return self._data.get("database", {})
+        return _settings.get("database", {})
 
     @property
     def database_path(self) -> str:
-        path = self.database.get("path", "./data/chatAgent.sqlite")
-        # 基于项目根目录解析，确保数据库存放在 personalAgent/data/ 下
+        path = _settings.get("database", {}).get("path", "./data/chatAgent.sqlite")
         if not os.path.isabs(path):
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             path = os.path.join(project_root, path)
@@ -50,41 +48,41 @@ class Config:
 
     @property
     def database_echo(self) -> bool:
-        return self.database.get("echo", False)
+        return _settings.get("database", {}).get("echo", False)
 
     @property
     def logging(self) -> dict:
-        return self._data.get("logging", {})
+        return _settings.get("logging", {})
 
     @property
     def log_level(self) -> str:
-        return self.logging.get("level", "INFO")
+        return _settings.get("logging", {}).get("level", "INFO")
 
     @property
     def log_format(self) -> str:
-        return self.logging.get(
+        return _settings.get("logging", {}).get(
             "format", "%(asctime)s - %(name)-20s - %(levelname)s - %(message)s"
         )
 
     @property
     def toolservice(self) -> dict:
-        return self._data.get("toolservice", {})
+        return _settings.get("toolservice", {})
 
     @property
     def toolservice_url(self) -> str:
-        return self.toolservice.get("url", "http://localhost:8003")
+        return _settings.get("toolservice", {}).get("url", "http://localhost:8003")
 
     @property
     def toolservice_refresh_interval(self) -> int:
-        return self.toolservice.get("refresh_interval", 300)
+        return _settings.get("toolservice", {}).get("refresh_interval", 300)
 
     @property
     def tool_call_timeout(self) -> int:
-        return self.toolservice.get("call_timeout", 10)
+        return _settings.get("toolservice", {}).get("call_timeout", 10)
 
     @property
     def providers(self) -> dict:
-        return self._data.get("providers", {})
+        return _settings.get("providers", {})
 
     def get_all_model_providers(self) -> list[dict]:
         result = []
@@ -119,7 +117,7 @@ class Config:
         raise ValueError(f"未找到模型提供者: {model_name}，且无默认提供者可用")
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self._data.get(key, default)
+        return _settings.get(key, default)
 
 
 def get_config() -> Config:
