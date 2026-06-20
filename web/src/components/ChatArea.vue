@@ -20,7 +20,7 @@
       <el-tag size="small" type="info">{{ chatStore.currentModel }}</el-tag>
     </div>
 
-    <div ref="messageListRef" class="message-list scrollable">
+    <div ref="messageListRef" class="message-list scrollable" @scroll="handleScroll">
       <div v-if="messages.length === 0" class="empty-state">
         <el-icon :size="48" color="#c0c4cc"><ChatDotRound /></el-icon>
         <p>开始一段新对话吧</p>
@@ -145,16 +145,8 @@
           placeholder="输入消息，按 Enter 发送，Shift+Enter 换行..."
           resize="none"
           @keydown="handleKeydown"
+          @input="autoResize"
         />
-        <el-button
-          type="primary"
-          :icon="Promotion"
-          :loading="chatStore.loading"
-          :disabled="!inputText.trim() || chatStore.loading"
-          @click="handleSend"
-        >
-          发送
-        </el-button>
       </div>
       <div class="input-actions">
         <div class="model-selector-inline">
@@ -176,13 +168,22 @@
           <span class="action-icon">💭</span>
           <span class="action-label">深度思考</span>
         </button>
+        <el-button
+          type="primary"
+          :icon="Promotion"
+          :loading="chatStore.loading"
+          :disabled="!inputText.trim() || chatStore.loading"
+          @click="handleSend"
+        >
+          发送
+        </el-button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, inject } from 'vue'
+import { ref, computed, watch, nextTick, inject, onMounted } from 'vue'
 import { Promotion, ChatDotRound } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 import MarkdownIt from 'markdown-it'
@@ -213,7 +214,32 @@ const chatStore = useChatStore()
 const inputText = ref('')
 const messageListRef = ref(null)
 const inputRef = ref(null)
+const isUserAtBottom = ref(true)
 const sidebarCollapsed = inject('sidebarCollapsed')
+
+const MAX_INPUT_HEIGHT = 300 // px，约12行
+
+function autoResize() {
+  nextTick(() => {
+    const textarea = inputRef.value?.textarea
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    const newHeight = Math.min(textarea.scrollHeight, MAX_INPUT_HEIGHT)
+    textarea.style.height = newHeight + 'px'
+    // 内容溢出时添加 scrollable 类以显示滚动条，否则移除
+    if (textarea.scrollHeight > MAX_INPUT_HEIGHT) {
+      textarea.classList.add('scrollable')
+      textarea.style.overflowY = 'scroll'
+    } else {
+      textarea.classList.remove('scrollable')
+      textarea.style.overflowY = 'hidden'
+    }
+  })
+}
+
+onMounted(() => {
+  autoResize()
+})
 
 const messages = computed(() => chatStore.messages)
 
@@ -329,7 +355,17 @@ function renderMarkdown(text) {
   processed = processed.replace(/^\s*\](\s*)$/gm, '$$$1')
   // 行内裸 ( ... ) 包含 LaTeX 命令时转为 $...$
   // 排除 \left( 和 \right) 的情况，避免破坏块级公式
+  // 先用占位符保护已有的 $...$ 和 $$...$$ 内容，防止裸括号正则误匹配公式内部的括号
+  const mathPlaceholders = []
+  const placeholder = (idx) => `\x00MATH${idx}\x00`
+  processed = processed.replace(/\$\$[\s\S]+?\$\$|\$[^$\n]+?\$/g, (match) => {
+    const idx = mathPlaceholders.length
+    mathPlaceholders.push(match)
+    return placeholder(idx)
+  })
   processed = processed.replace(/(?<!\\left)\(([^)]*?\\(?:frac|sqrt|dfrac|text|quad|cdot|times|alpha|beta|gamma|delta|epsilon|theta|lambda|mu|pi|sigma|omega|sum|prod|int|lim|infty|partial|nabla|mathbb|operatorname|mathrm|mathbf|overline|underline|vec|hat|bar|dot|ddot|tilde|widehat|widetilde)[^)]*?)(?<!\\right)\)/g, (_, formula) => `$${formula.trim()}$`)
+  // 还原占位符
+  processed = processed.replace(/\x00MATH(\d+)\x00/g, (_, idx) => mathPlaceholders[parseInt(idx)])
   // 清理 $/$$ 与公式内容之间的空格（texmath dollars 规则要求 $ 紧跟非空格字符）
   // 处理 $$ ... $$
   processed = processed.replace(/\$\$\s*([\s\S]+?)\s*\$\$/g, '$$$1$$')
@@ -370,9 +406,22 @@ function scrollToBottom() {
   })
 }
 
+function handleScroll() {
+  const el = messageListRef.value
+  if (!el) return
+  const threshold = 50
+  isUserAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
+}
+
+function smartScrollToBottom() {
+  if (isUserAtBottom.value) {
+    scrollToBottom()
+  }
+}
+
 watch(
   () => chatStore.messages.length,
-  () => scrollToBottom()
+  () => smartScrollToBottom()
 )
 
 watch(
@@ -382,7 +431,7 @@ watch(
     const textBlock = last.blocks?.find(b => b.type === 'text')
     return textBlock ? textBlock.content : ''
   },
-  () => scrollToBottom()
+  () => smartScrollToBottom()
 )
 
 watch(
@@ -408,7 +457,9 @@ function handleSend() {
   const text = inputText.value.trim()
   if (!text || chatStore.loading) return
   inputText.value = ''
+  isUserAtBottom.value = true
   chatStore.sendMessage(text)
+  autoResize()
 }
 </script>
 
@@ -694,16 +745,17 @@ function handleSend() {
 .markdown-body :deep(a:hover) { text-decoration: underline; }
 
 .chat-input-wrapper {
-  border-top: 1px solid #e4e7ed;
   background: #fff;
   flex-shrink: 0;
 }
 
 .chat-input {
   display: flex;
-  gap: 10px;
-  padding: 16px 20px 8px;
-  align-items: flex-end;
+  padding: 16px 20px 0;
+}
+
+.chat-input :deep(.el-textarea) {
+  flex: 1;
 }
 
 .chat-input :deep(.el-textarea__inner) {
@@ -714,7 +766,11 @@ function handleSend() {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 20px 12px;
+  padding: 8px 20px 12px;
+}
+
+.input-actions .el-button {
+  margin-left: auto;
 }
 
 .model-selector-inline {
