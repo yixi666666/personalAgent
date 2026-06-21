@@ -45,13 +45,15 @@ export const useChatStore = defineStore('chat', () => {
       } else if (c.type === 'tool_call') {
         const callId = c.content
         const tc = toolCallsMap[callId]
+        // 优先从 metadata.tool_name 取工具名（后端已存储），避免历史会话显示"未知"
+        const toolName = (c.metadata && c.metadata.tool_name) || '未知'
         blocks.push({
           type: 'tool_call',
           _messageId: messageId,
           toolCall: tc || {
             id: callId,
             type: 'function',
-            function: { name: '未知', arguments: '{}' },
+            function: { name: toolName, arguments: '{}' },
             result: null,
             status: 'unknown',
           },
@@ -95,7 +97,6 @@ export const useChatStore = defineStore('chat', () => {
           id: m.id,
           role: m.role,
           blocks: allBlocks,
-          display_time: m.created_time || '',
         }
 
         processed.push(msg)
@@ -107,7 +108,6 @@ export const useChatStore = defineStore('chat', () => {
           id: `pending_tc_${Date.now()}`,
           role: 'assistant',
           blocks: pendingBlocks,
-          display_time: '',
         })
       }
 
@@ -148,16 +148,10 @@ export const useChatStore = defineStore('chat', () => {
     streamingReasoning.value = ''
 
     // 先在本地添加用户消息
-    const now = new Date()
-    const displayTime = now.toLocaleString('zh-CN', {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-    })
     const userMsg = {
       id: `temp_${Date.now()}`,
       role: 'user',
       blocks: [{ type: 'text', content: prompt }],
-      display_time: displayTime,
     }
     messages.value.push(userMsg)
 
@@ -168,7 +162,6 @@ export const useChatStore = defineStore('chat', () => {
       role: 'assistant',
       blocks: [],
       isStreaming: true,
-      display_time: displayTime,
     })
 
     // 暂存工具调用信息

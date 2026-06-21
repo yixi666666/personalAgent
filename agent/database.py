@@ -50,6 +50,7 @@ def init_db():
             message_id TEXT DEFAULT NULL,
             type TEXT DEFAULT NULL,
             content TEXT DEFAULT NULL,
+            metadata TEXT DEFAULT NULL,
             sort_order INTEGER DEFAULT NULL,
             created_time INTEGER DEFAULT NULL
         );

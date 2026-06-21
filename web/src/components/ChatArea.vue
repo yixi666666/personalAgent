@@ -40,7 +40,6 @@
         <div class="message-body">
           <div class="message-meta">
             <span class="message-role">{{ msg.role === 'user' ? '我' : '助手' }}</span>
-            <span v-if="msg.display_time" class="message-time">{{ msg.display_time }}</span>
           </div>
           <!-- 按 segments 顺序渲染 -->
           <template v-for="(segment, sIdx) in msg.segments" :key="sIdx">
@@ -564,11 +563,6 @@ function handleSend() {
 .message-role {
   font-size: 12px;
   color: #909399;
-}
-
-.message-time {
-  font-size: 11px;
-  color: #c0c4cc;
 }
 
 .message-content {

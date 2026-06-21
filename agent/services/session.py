@@ -1,5 +1,6 @@
 import uuid
 import time
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -30,11 +31,14 @@ def _format_title(ts: int) -> str:
 
 
 def _format_display_time(ts: Optional[int]) -> Optional[str]:
-    """将 UTC 时间戳转为 UTC+8 可读字符串，用于前端展示"""
+    """将 UTC 时间戳转为 UTC+8 可读字符串，用于前端展示
+
+    时间精确到分钟（不显示秒），仅用于会话级别时间
+    """
     if ts is None:
         return None
     dt = datetime.fromtimestamp(ts, tz=UTC8)
-    return dt.strftime('%Y-%m-%d %H:%M:%S')
+    return dt.strftime('%Y-%m-%d %H:%M')
 
 
 class SessionManager:
@@ -59,11 +63,13 @@ class SessionManager:
     def add_message(
         self, session_id: str, role: str, content: str = "", parent_id: Optional[str] = None,
         reasoning_content: str = "",
+        reasoning_metadata: Optional[dict] = None,
     ) -> MessageItem:
         """添加消息，内容存入 message_contents 表
 
         适用于：用户消息、纯文本助手回复、系统消息
         reasoning_content: DeepSeek 深度思考内容，存为 type='reasoning'
+        reasoning_metadata: reasoning 内容块的展示属性，如 {"tokens": 256, "finish_reason": "stop"}
         """
         msg_id = str(uuid.uuid4())
         now = _utc_now()
@@ -76,17 +82,18 @@ class SessionManager:
         sort_order = 0
         if reasoning_content:
             mc_id = str(uuid.uuid4())
+            metadata_json = json.dumps(reasoning_metadata, ensure_ascii=False) if reasoning_metadata else None
             db.execute(
-                "INSERT INTO message_contents (id, message_id, type, content, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-                (mc_id, msg_id, "reasoning", reasoning_content, sort_order, now),
+                "INSERT INTO message_contents (id, message_id, type, content, metadata, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mc_id, msg_id, "reasoning", reasoning_content, metadata_json, sort_order, now),
             )
-            contents.append(ContentItem(type="reasoning", content=reasoning_content, sort_order=sort_order))
+            contents.append(ContentItem(type="reasoning", content=reasoning_content, metadata=reasoning_metadata, sort_order=sort_order))
             sort_order += 1
         if content:
             mc_id = str(uuid.uuid4())
             db.execute(
-                "INSERT INTO message_contents (id, message_id, type, content, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-                (mc_id, msg_id, "text", content, sort_order, now),
+                "INSERT INTO message_contents (id, message_id, type, content, metadata, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mc_id, msg_id, "text", content, None, sort_order, now),
             )
             contents.append(ContentItem(type="text", content=content, sort_order=sort_order))
         db.execute(
@@ -96,7 +103,6 @@ class SessionManager:
         db.commit()
         return MessageItem(
             id=msg_id, parent_id=parent_id, role=role, contents=contents,
-            created_time=_format_display_time(now), updated_time=_format_display_time(now),
         )
 
     def add_assistant_message_with_tool_calls(
@@ -106,6 +112,7 @@ class SessionManager:
         tool_calls: list[dict],
         parent_id: Optional[str] = None,
         reasoning_content: str = "",
+        reasoning_metadata: Optional[dict] = None,
     ) -> str:
         """添加带工具调用的助手消息
 
@@ -128,31 +135,32 @@ class SessionManager:
         sort_order = 0
         if reasoning_content:
             mc_id = str(uuid.uuid4())
+            metadata_json = json.dumps(reasoning_metadata, ensure_ascii=False) if reasoning_metadata else None
             db.execute(
-                "INSERT INTO message_contents (id, message_id, type, content, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-                (mc_id, msg_id, "reasoning", reasoning_content, sort_order, now),
+                "INSERT INTO message_contents (id, message_id, type, content, metadata, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mc_id, msg_id, "reasoning", reasoning_content, metadata_json, sort_order, now),
             )
             sort_order += 1
         if content:
             mc_id = str(uuid.uuid4())
             db.execute(
-                "INSERT INTO message_contents (id, message_id, type, content, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-                (mc_id, msg_id, "text", content, sort_order, now),
+                "INSERT INTO message_contents (id, message_id, type, content, metadata, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mc_id, msg_id, "text", content, None, sort_order, now),
             )
             sort_order += 1
         for tc in tool_calls:
             call_id = tc.get("id", f"call_{uuid.uuid4().hex[:8]}")
             mc_id = str(uuid.uuid4())
+            tool_name = tc.get("function", {}).get("name", "unknown")
+            tool_metadata = {"tool_name": tool_name}
             db.execute(
-                "INSERT INTO message_contents (id, message_id, type, content, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-                (mc_id, msg_id, "tool_call", call_id, sort_order, now),
+                "INSERT INTO message_contents (id, message_id, type, content, metadata, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mc_id, msg_id, "tool_call", call_id, json.dumps(tool_metadata, ensure_ascii=False), sort_order, now),
             )
             sort_order += 1
             # 3. 插入 tool_calls 记录（status=pending）
-            tool_name = tc.get("function", {}).get("name", "unknown")
             arguments = tc.get("function", {}).get("arguments", "{}")
             if isinstance(arguments, dict):
-                import json
                 arguments = json.dumps(arguments, ensure_ascii=False)
             tc_id = str(uuid.uuid4())
             db.execute(
@@ -212,8 +220,8 @@ class SessionManager:
             # 没有 text 内容块，创建一个
             mc_id = str(uuid.uuid4())
             db.execute(
-                "INSERT INTO message_contents (id, message_id, type, content, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-                (mc_id, message_id, "text", content, 0, now),
+                "INSERT INTO message_contents (id, message_id, type, content, metadata, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mc_id, message_id, "text", content, None, 0, now),
             )
         # 更新消息的 updated_time
         db.execute(
@@ -245,20 +253,28 @@ class SessionManager:
         for row in msg_rows:
             # 从 message_contents 表读取内容块
             mc_rows = db.execute(
-                "SELECT type, content, sort_order FROM message_contents WHERE message_id = ? ORDER BY sort_order",
+                "SELECT type, content, metadata, sort_order FROM message_contents WHERE message_id = ? ORDER BY sort_order",
                 (row["id"],),
             ).fetchall()
-            contents = [
-                ContentItem(type=mc["type"], content=mc["content"], sort_order=mc["sort_order"])
-                for mc in mc_rows
-            ]
+            contents = []
+            for mc in mc_rows:
+                metadata = None
+                if mc["metadata"]:
+                    try:
+                        metadata = json.loads(mc["metadata"])
+                    except (json.JSONDecodeError, TypeError):
+                        metadata = None
+                contents.append(ContentItem(
+                    type=mc["type"],
+                    content=mc["content"],
+                    metadata=metadata,
+                    sort_order=mc["sort_order"] or 0,
+                ))
             msg_item = MessageItem(
                 id=row["id"],
                 parent_id=row["parent_id"],
                 role=row["role"],
                 contents=contents,
-                created_time=_format_display_time(row["created_time"]),
-                updated_time=_format_display_time(row["updated_time"]),
             )
             messages.append(msg_item)
         return SessionDetailResponse(

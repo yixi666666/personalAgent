@@ -248,12 +248,17 @@ class ChatService:
                 if finish_reason == "tool_calls" and tool_calls_buffer:
                     # 按文档流程：存储 assistant 消息 + message_contents(reasoning + tool_call) + tool_calls(pending)
                     session_manager = get_session_manager()
+                    reasoning_metadata = (
+                        self._build_reasoning_metadata(usage_data, finish_reason)
+                        if full_reasoning else None
+                    )
                     assistant_msg_id = session_manager.add_assistant_message_with_tool_calls(
                         session_id=session_id,
                         content=full_content or "",
                         tool_calls=tool_calls_buffer,
                         parent_id=parent_id,
                         reasoning_content=full_reasoning,
+                        reasoning_metadata=reasoning_metadata,
                     )
                     yield {"type": "tool_calls", "tool_calls": tool_calls_buffer}
 
@@ -313,12 +318,17 @@ class ChatService:
                 # 普通回复
                 if full_content:
                     session_manager = get_session_manager()
+                    reasoning_metadata = (
+                        self._build_reasoning_metadata(usage_data, finish_reason)
+                        if full_reasoning else None
+                    )
                     session_manager.add_message(
                         session_id=session_id,
                         role="assistant",
                         content=full_content,
                         parent_id=parent_id,
                         reasoning_content=full_reasoning,
+                        reasoning_metadata=reasoning_metadata,
                     )
 
                 yield {"type": "finish", "finish_reason": finish_reason}
@@ -337,12 +347,17 @@ class ChatService:
         logger.debug(f"{round_prefix} 模型返回 <<< {json.dumps(complete_response, ensure_ascii=False)}")
         if full_content:
             session_manager = get_session_manager()
+            reasoning_metadata = (
+                self._build_reasoning_metadata(usage_data, "stop")
+                if full_reasoning else None
+            )
             session_manager.add_message(
                 session_id=session_id,
                 role="assistant",
                 content=full_content,
                 parent_id=parent_id,
                 reasoning_content=full_reasoning,
+                reasoning_metadata=reasoning_metadata,
             )
         yield {"type": "finish", "finish_reason": "stop"}
 
@@ -399,14 +414,20 @@ class ChatService:
         if finish_reason == "tool_calls" and tool_calls:
             session_manager = get_session_manager()
             formatted_calls = self._format_tool_calls(tool_calls)
+            usage_data = response.get("usage") or {}
 
             # 按文档流程：存储 assistant 消息 + message_contents(reasoning + tool_call) + tool_calls(pending)
+            reasoning_metadata = (
+                self._build_reasoning_metadata(usage_data, finish_reason)
+                if reasoning_content else None
+            )
             assistant_msg_id = session_manager.add_assistant_message_with_tool_calls(
                 session_id=session_id,
                 content=content,
                 tool_calls=formatted_calls,
                 parent_id=parent_id,
                 reasoning_content=reasoning_content,
+                reasoning_metadata=reasoning_metadata,
             )
 
             if content:
@@ -483,12 +504,18 @@ class ChatService:
             # 纯文本回复（无工具调用）
             yield {"type": "delta", "content": content}
             session_manager = get_session_manager()
+            usage_data = response.get("usage") or {}
+            reasoning_metadata = (
+                self._build_reasoning_metadata(usage_data, finish_reason)
+                if reasoning_content else None
+            )
             session_manager.add_message(
                 session_id=session_id,
                 role="assistant",
                 content=content,
                 parent_id=parent_id,
                 reasoning_content=reasoning_content,
+                reasoning_metadata=reasoning_metadata,
             )
 
         yield {"type": "finish", "finish_reason": finish_reason}
@@ -602,6 +629,24 @@ class ChatService:
                 },
             })
         return formatted
+
+    @staticmethod
+    def _build_reasoning_metadata(usage_data: dict, finish_reason: str) -> dict:
+        """从 usage 数据构造 reasoning 内容块的 metadata
+
+        按 init.sql 说明：reasoning 存储 {"tokens": 256, "finish_reason": "stop"} 等模型输出详情
+        - tokens 优先取 completion_tokens_details.reasoning_tokens，回退到 completion_tokens
+        - finish_reason 为模型返回的结束原因
+        """
+        metadata: dict = {"finish_reason": finish_reason or "stop"}
+        if usage_data:
+            completion_tokens_details = usage_data.get("completion_tokens_details") or {}
+            reasoning_tokens = completion_tokens_details.get("reasoning_tokens")
+            if reasoning_tokens is not None:
+                metadata["tokens"] = reasoning_tokens
+            elif usage_data.get("completion_tokens") is not None:
+                metadata["tokens"] = usage_data.get("completion_tokens")
+        return metadata
 
     # ------------------------------------------------------------------
     # 文本工具调用提取与校验
