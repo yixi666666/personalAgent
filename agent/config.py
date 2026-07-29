@@ -29,7 +29,7 @@ class Config:
 
     @property
     def default_model(self) -> str:
-        return _settings.get("default_model", "xop3qwen1b7")
+        return _settings.get("default_model", "glm-4.7-flash")
 
     @property
     def database(self) -> dict:

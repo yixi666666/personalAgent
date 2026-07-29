@@ -17,8 +17,17 @@ chunking:
     - "，"
     - " "
 
-vectorstore:
-  persist_directory: "./chroma_db"
+# Weaviate 向量数据库配置
+weaviate:
+  url: "http://localhost:8080"
+  class_name: "Chunk"
+  distance: "cosine"
+  ef_construction: 100
+  max_connections: 16
+
+# 本地 OSS 模拟（后续替换为真 OSS 时只需修改 oss.py 实现）
+local_oss:
+  root: "./local_oss"
 
 upload:
   max_memory_size: 1048576  # 1MB，超过此大小先保存到临时文件
@@ -40,4 +49,4 @@ llm:
 
 search:
   top_k: 5
-  score_threshold: 1.5  # Chroma L2 距离阈值，越小越相似，超过此值的结果将被过滤
+  hybrid_alpha: 0.5  # 0=纯BM25关键词, 1=纯向量, 0.5=混合（默认）

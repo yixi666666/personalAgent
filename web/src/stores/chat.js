@@ -7,7 +7,7 @@ export const useChatStore = defineStore('chat', () => {
   const currentSessionId = ref(null)
   const messages = ref([])
   const loading = ref(false)
-  const currentModel = ref('xop3qwen1b7')
+  const currentModel = ref('glm-4.7-flash')
   const models = ref([])
   const tools = ref([])
   const streamingContent = ref('')

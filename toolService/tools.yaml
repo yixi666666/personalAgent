@@ -20,14 +20,15 @@ internal_tools:
 # retry: 重试策略，进程异常退出时自动重启
 # ============================================================
 local_mcp:
-  - name: calculator
-    command: npx
-    args: ["mcp-calculator"]
-    transport: stdio
-    env: {}
-    retry:
-      max_attempts: 3
-      delay_seconds: 5
+  # - name: calculator
+  #   command: npx
+  #   args: ["mcp-calculator"]
+  #   transport: stdio
+  #   env: {}
+  #   retry:
+  #     max_attempts: 3
+  #     delay_seconds: 5
+
 # 示例：
 # local_mcp:
 #   - name: filesystem

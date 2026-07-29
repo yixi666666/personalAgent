@@ -1,0 +1,24 @@
+services:
+  weaviate:
+    image: semitechnologies/weaviate:1.24.22
+    container_name: ragbase-weaviate
+    ports:
+      - "8080:8080"      # HTTP API
+      - "50051:50051"    # gRPC API（weaviate-client 4.x 需要）
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'none'
+      ENABLE_MODULES: ''
+      CLUSTER_HOSTNAME: 'node1'
+      GRPC_PORT: '50051'
+      AUTOSCHEMA_ENABLED: 'false'
+    volumes:
+      - ./weaviate_data:/var/lib/weaviate
+    restart: on-failure:0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from agent.models.chat import ChatRequest
 from agent.services.chat_service import get_chat_service
+from agent.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +18,13 @@ router = APIRouter()
 async def _stream_chat_generator(request: ChatRequest):
     """流式对话生成器：将 ChatService 的事件字典转为 SSE 格式"""
     chat_service = get_chat_service()
+    model = request.model or get_config().default_model
 
     try:
         session_id, llm_messages, user_msg_id = await chat_service.prepare_session(
             session_id=request.session_id,
             prompt=request.prompt,
-            model=request.model,
+            model=model,
         )
     except ValueError as e:
         yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
@@ -32,7 +34,7 @@ async def _stream_chat_generator(request: ChatRequest):
 
     async for event in chat_service.stream_chat(
         messages=llm_messages,
-        model=request.model,
+        model=model,
         max_tokens=request.max_tokens,
         temperature=request.temperature,
         session_id=session_id,
