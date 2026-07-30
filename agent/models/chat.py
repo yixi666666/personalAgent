@@ -3,7 +3,7 @@ from typing import Optional, Literal
 
 
 class ChatRequest(BaseModel):
-    model: Optional[str] = Field(default=None, description="模型名称，留空则使用配置中的默认模型。")
+    model: str = Field(..., description="模型名称，必须由前端指定。")
     prompt: str = Field(..., description="用户输入的提示文本")
     session_id: Optional[str] = Field(default=None, description="会话ID，为空则创建新会话")
     stream: Literal[True] = Field(default=True, description="是否流式响应，强制为True")

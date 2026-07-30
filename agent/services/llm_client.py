@@ -11,8 +11,6 @@ logger = logging.getLogger(__name__)
 
 class LLMClient:
     def __init__(self):
-        config = get_config()
-        self.default_model = config.default_model
         self._clients: dict[str, AsyncOpenAI] = {}
 
     def _get_client(self, provider: dict) -> AsyncOpenAI:
@@ -35,10 +33,9 @@ class LLMClient:
             await client.close()
         self._clients.clear()
 
-    def _resolve_provider(self, model: Optional[str] = None) -> dict:
+    def _resolve_provider(self, model: str) -> dict:
         config = get_config()
-        target_model = model or self.default_model
-        return config.resolve_model_provider(target_model)
+        return config.resolve_model_provider(model)
 
     def _build_extra_body(self, provider: dict, stream: bool, deep_thinking: bool = False) -> dict:
         """构建 extra_body：星火模型关闭联网搜索，非本地模型流式时包含 stream_options，DeepSeek/GLM 思考模式"""
@@ -57,7 +54,7 @@ class LLMClient:
     async def chat_completion(
         self,
         messages: list[dict],
-        model: Optional[str] = None,
+        model: str,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         tools: Optional[list[dict]] = None,
@@ -70,7 +67,7 @@ class LLMClient:
         client = self._get_client(provider)
 
         kwargs: dict = {
-            "model": model or provider["name"],
+            "model": model,
             "messages": messages,
             "max_tokens": max_tokens or provider.get("max_tokens", 2048),
             "temperature": temperature if temperature is not None else provider.get("temperature", 0.7),
@@ -104,7 +101,7 @@ class LLMClient:
     async def chat_stream(
         self,
         messages: list[dict],
-        model: Optional[str] = None,
+        model: str,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         tools: Optional[list[dict]] = None,
@@ -117,7 +114,7 @@ class LLMClient:
         client = self._get_client(provider)
 
         kwargs: dict = {
-            "model": model or provider["name"],
+            "model": model,
             "messages": messages,
             "max_tokens": max_tokens or provider.get("max_tokens", 2048),
             "temperature": temperature if temperature is not None else provider.get("temperature", 0.7),

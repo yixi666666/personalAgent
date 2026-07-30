@@ -28,10 +28,6 @@ class Config:
         return _settings.get("server", {}).get("port", 8002)
 
     @property
-    def default_model(self) -> str:
-        return _settings.get("default_model", "glm-4.7-flash")
-
-    @property
     def database(self) -> dict:
         return _settings.get("database", {})
 
@@ -112,9 +108,7 @@ class Config:
         for mp in providers:
             if mp["name"] == model_name:
                 return mp
-        if providers:
-            return providers[0]
-        raise ValueError(f"未找到模型提供者: {model_name}，且无默认提供者可用")
+        raise ValueError(f"未找到模型提供者: {model_name}")
 
     def get(self, key: str, default: Any = None) -> Any:
         return _settings.get(key, default)
