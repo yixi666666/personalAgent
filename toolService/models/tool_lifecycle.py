@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 
-from toolservice.models.states import ToolState
+from toolService.models.states import ToolState
 
 
 class ToolLifecycle(ABC):

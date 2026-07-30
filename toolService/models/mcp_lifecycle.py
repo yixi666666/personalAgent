@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from toolservice.models.states import McpServerState
+from toolService.models.states import McpServerState
 
 
 class McpLifecycle(ABC):

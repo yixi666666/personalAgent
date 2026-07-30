@@ -3,8 +3,8 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from toolservice.models.mcp_lifecycle import McpLifecycle
-from toolservice.models.states import McpServerState
+from toolService.models.mcp_lifecycle import McpLifecycle
+from toolService.models.states import McpServerState
 
 logger = logging.getLogger(__name__)
 

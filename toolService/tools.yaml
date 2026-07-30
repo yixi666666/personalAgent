@@ -8,9 +8,9 @@
 # ============================================================
 internal_tools:
   - name: date_info
-    handler: toolservice.tools.date_info.DateInfoTool
+    handler: toolService.tools.date_info.DateInfoTool
   - name: rag_search
-    handler: toolservice.tools.rag_search.RagSearchTool
+    handler: toolService.tools.rag_search.RagSearchTool
 
 # ============================================================
 # 本地 MCP 工具：配置启动命令和参数，工具服务以子进程方式管理

@@ -1,9 +1,9 @@
 import logging
 from typing import Any, Callable, Dict
 
-from toolservice.models.tool_lifecycle import ToolLifecycle
-from toolservice.models.states import ToolState
-from toolservice.models.tool import _ensure_async
+from toolService.models.tool_lifecycle import ToolLifecycle
+from toolService.models.states import ToolState
+from toolService.models.tool import _ensure_async
 
 logger = logging.getLogger(__name__)
 

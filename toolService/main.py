@@ -2,9 +2,9 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from toolservice.config import get_config
-from toolservice.routers import tools
-from toolservice.services.tool_registry import get_tool_registry
+from toolService.config import get_config
+from toolService.routers import tools
+from toolService.services.tool_registry import get_tool_registry
 
 
 @asynccontextmanager
