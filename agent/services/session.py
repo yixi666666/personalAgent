@@ -365,12 +365,17 @@ class SessionManager:
 
                 if has_tool_calls:
                     # 构造 assistant 消息（含 tool_calls）
-                    # 提取 reasoning/text 内容
+                    # 提取 reasoning/text 内容（reasoning 作为独立字段，不拼入 content）
                     text_parts = []
+                    reasoning_parts = []
                     for mc in mc_rows:
-                        if mc["type"] in ("text", "reasoning"):
+                        if mc["type"] == "text":
                             text_parts.append(mc["content"] or "")
+                        elif mc["type"] == "reasoning":
+                            reasoning_parts.append(mc["content"] or "")
                     msg["content"] = "\n".join(text_parts) if text_parts else None
+                    if reasoning_parts:
+                        msg["reasoning_content"] = "\n".join(reasoning_parts)
 
                     # 从 tool_calls 表获取工具调用详情
                     tc_rows = db.execute(
@@ -403,12 +408,17 @@ class SessionManager:
                             "content": tc["result"] or "",
                         })
                 else:
-                    # 普通助手消息（纯文本）
+                    # 普通助手消息（纯文本，reasoning 作为独立字段）
                     text_parts = []
+                    reasoning_parts = []
                     for mc in mc_rows:
-                        if mc["type"] in ("text", "reasoning"):
+                        if mc["type"] == "text":
                             text_parts.append(mc["content"] or "")
+                        elif mc["type"] == "reasoning":
+                            reasoning_parts.append(mc["content"] or "")
                     msg["content"] = "\n".join(text_parts) if text_parts else ""
+                    if reasoning_parts:
+                        msg["reasoning_content"] = "\n".join(reasoning_parts)
                     messages.append(msg)
             else:
                 # user / system 消息

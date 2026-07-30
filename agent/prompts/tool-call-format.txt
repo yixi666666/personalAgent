@@ -1,0 +1,13 @@
+Tool Call Response Format:
+When you need to call a tool, output strictly in the following JSON format. Output pure JSON directly:
+{"role": "assistant","content": null,"tool_calls": [{"id": "call_xxxxxx","type": "function","function": {"name": "tool_name","arguments": "{\"param\":\"value\"}"}}]}
+Rules:
+- content: If there is no text, it must be null, not an empty string "". If text explanation is also output, fill in the actual text.
+- id: Call identifier, unique within the current conversation context, prefixed with "call_".
+- type: Fixed as "function".
+- function.name: Must be an actual available tool name. No placeholders.
+- function.arguments: Must be a JSON string, not a direct JSON object. The string content must be a valid JSON object with keys and values in double quotes. Double quotes inside the string must be escaped with backslash. Example: "arguments": "{\"city\":\"Beijing\"}".
+- Multiple tool calls go in the same tool_calls array.
+- Output pure JSON without any additional text or markers.
+
+You can use the following tools to help answer user questions:

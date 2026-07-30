@@ -5,7 +5,6 @@ from typing import Optional, AsyncGenerator
 from openai import AsyncOpenAI, APIStatusError, APIConnectionError
 
 from agent.config import get_config
-from agent.services.context import sanitize_messages
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +66,6 @@ class LLMClient:
         round_num: int = 1,
     ) -> dict:
         """非流式调用LLM（用于本地模型 stream=false + tools）"""
-        messages = sanitize_messages(messages, supports_tools=supports_tools)
         provider = self._resolve_provider(model)
         client = self._get_client(provider)
 
@@ -78,9 +76,7 @@ class LLMClient:
             "temperature": temperature if temperature is not None else provider.get("temperature", 0.7),
             "stream": False,
         }
-        # 本地模型（LLaMA-Factory）不会用 chat_template 渲染 tools 参数，
-        # 工具格式指令已通过系统提示词注入，不需要传 tools/tool_choice 参数
-        if tools and supports_tools and provider.get("provider") != "local":
+        if tools and supports_tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
@@ -117,7 +113,6 @@ class LLMClient:
         round_num: int = 1,
     ) -> AsyncGenerator[dict, None]:
         """流式调用LLM，yield SDK 解析后的 chunk dict"""
-        messages = sanitize_messages(messages, supports_tools=supports_tools)
         provider = self._resolve_provider(model)
         client = self._get_client(provider)
 

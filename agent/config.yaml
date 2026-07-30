@@ -43,7 +43,7 @@ providers:
     max_tokens: 4096
     temperature: 0.7
     api_key: null
-    supports_tools: true
+    supports_tools: false
     deep_thinking: false
     web_search: false
     structured_output: false

@@ -1,10 +1,9 @@
 import json
-import re
 import uuid
 import logging
 from typing import Optional, AsyncGenerator
 from agent.services.llm_client import get_llm_client
-from agent.services.context import get_context_manager
+from agent.services.context_engine import get_context_engine
 from agent.services.session import get_session_manager
 from agent.services.tool_manager import get_tool_manager
 from agent.config import get_config
@@ -57,22 +56,12 @@ class ChatService:
             parent_id=parent_id,
         )
 
-        config = get_config()
-        provider = config.resolve_model_provider(model)
-        supports_tools = provider.get("supports_tools", True)
-        is_local = provider.get("provider") == "local"
-
-        context_manager = get_context_manager()
         tool_manager = get_tool_manager()
         tool_schemas = await tool_manager.get_tool_schemas_for_llm()
 
-        llm_messages = context_manager.build_llm_messages(
-            session_id=session_id,
-            new_messages=[],
-            tool_schemas=tool_schemas,
-            supports_tools=supports_tools,
-            is_local=is_local,
-            model=model,
+        context_engine = get_context_engine()
+        llm_messages = context_engine.build_messages(
+            session_id=session_id, model=model, tool_schemas=tool_schemas,
         )
 
         return session_id, llm_messages, user_msg.id
@@ -96,7 +85,6 @@ class ChatService:
         config = get_config()
         provider = config.resolve_model_provider(model)
         supports_tools = provider.get("supports_tools", True)
-        is_local = provider.get("provider") == "local"
 
         current_messages = messages
         current_parent_id = parent_id
@@ -106,31 +94,18 @@ class ChatService:
             round_num = _round + 1
             control = None
 
-            if is_local and supports_tools:
-                gen = self._call_non_stream(
-                    messages=current_messages,
-                    model=model,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    session_id=session_id,
-                    parent_id=current_parent_id,
-                    supports_tools=supports_tools,
-                    format_retry_count=format_retry_count,
-                    deep_thinking=deep_thinking,
-                    round_num=round_num,
-                )
-            else:
-                gen = self._call_stream(
-                    messages=current_messages,
-                    model=model,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    session_id=session_id,
-                    parent_id=current_parent_id,
-                    supports_tools=supports_tools,
-                    deep_thinking=deep_thinking,
-                    round_num=round_num,
-                )
+            gen = self._call_stream(
+                messages=current_messages,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                session_id=session_id,
+                parent_id=current_parent_id,
+                supports_tools=supports_tools,
+                deep_thinking=deep_thinking,
+                round_num=round_num,
+                format_retry_count=format_retry_count,
+            )
 
             async for item in gen:
                 if isinstance(item, _Control):
@@ -164,6 +139,7 @@ class ChatService:
         supports_tools: bool = True,
         deep_thinking: bool = False,
         round_num: int = 1,
+        format_retry_count: int = 0,
     ) -> AsyncGenerator[dict | _Control, None]:
         """流式调用LLM，实时 yield 事件，结束时 yield _Control 控制信号"""
         tools = None
@@ -264,7 +240,7 @@ class ChatService:
 
                     # 执行工具并更新 tool_calls 记录
                     next_messages, next_parent_id, tool_results_info = await self._execute_and_update_tool_calls(
-                        tool_calls_buffer, session_id, assistant_msg_id, model, supports_tools,
+                        tool_calls_buffer, session_id, assistant_msg_id, model,
                     )
                     yield {"type": "tool_results", "tool_results": tool_results_info}
                     yield _Control(next_messages=next_messages, next_parent_id=next_parent_id)
@@ -286,7 +262,7 @@ class ChatService:
                         yield {"type": "tool_calls", "tool_calls": extracted_calls}
 
                         next_messages, next_parent_id, tool_results_info = await self._execute_and_update_tool_calls(
-                            extracted_calls, session_id, assistant_msg_id, model, supports_tools,
+                            extracted_calls, session_id, assistant_msg_id, model,
                         )
                         yield {"type": "tool_results", "tool_results": tool_results_info}
                         yield _Control(next_messages=next_messages, next_parent_id=next_parent_id)
@@ -302,7 +278,7 @@ class ChatService:
                             content=full_content,
                             parent_id=parent_id,
                         )
-                        error_feedback = "工具调用解析失败，请检查格式并修正：\n" + "\n".join(parse_errors)
+                        error_feedback = "工具调用解析失败，请按 JSON 格式输出工具调用。错误详情：\n" + "\n".join(parse_errors)
                         session_manager.add_message(
                             session_id=session_id,
                             role="user",
@@ -311,8 +287,12 @@ class ChatService:
                         )
                         yield {"type": "error", "error": error_feedback}
 
-                        next_messages = await self._rebuild_context(session_id, model, supports_tools)
-                        yield _Control(next_messages=next_messages, next_parent_id=assistant_msg.id)
+                        next_messages = await self._rebuild_context(session_id, model)
+                        yield _Control(
+                            next_messages=next_messages,
+                            next_parent_id=assistant_msg.id,
+                            format_retry_count=format_retry_count + 1,
+                        )
                         return
 
                 # 普通回复
@@ -362,165 +342,6 @@ class ChatService:
         yield {"type": "finish", "finish_reason": "stop"}
 
     # ------------------------------------------------------------------
-    # 非流式调用路径（本地模型）
-    # ------------------------------------------------------------------
-
-    async def _call_non_stream(
-        self,
-        messages: list[dict],
-        model: str,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        session_id: str = "",
-        parent_id: Optional[str] = None,
-        supports_tools: bool = True,
-        format_retry_count: int = 0,
-        deep_thinking: bool = False,
-        round_num: int = 1,
-    ) -> AsyncGenerator[dict | _Control, None]:
-        """非流式调用LLM（用于本地模型 stream=false + tools）"""
-        tool_manager = get_tool_manager()
-        tools = await tool_manager.get_tool_schemas_for_llm()
-
-        llm_client = get_llm_client()
-        response = await llm_client.chat_completion(
-            messages=messages,
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            tools=tools,
-            supports_tools=supports_tools,
-            deep_thinking=deep_thinking,
-            round_num=round_num,
-        )
-
-        choices = response.get("choices", [])
-        if not choices:
-            yield {"type": "finish", "finish_reason": "stop"}
-            return
-
-        choice = choices[0]
-        message = choice.get("message", {})
-        finish_reason = choice.get("finish_reason", "stop")
-        content = message.get("content") or ""
-        reasoning_content = message.get("reasoning_content") or ""
-        tool_calls = message.get("tool_calls")
-
-        # 处理 DeepSeek 思考模式的 reasoning_content
-        if reasoning_content:
-            yield {"type": "reasoning_delta", "content": reasoning_content}
-
-        # 原生 function calling 工具调用
-        if finish_reason == "tool_calls" and tool_calls:
-            session_manager = get_session_manager()
-            formatted_calls = self._format_tool_calls(tool_calls)
-            usage_data = response.get("usage") or {}
-
-            # 按文档流程：存储 assistant 消息 + message_contents(reasoning + tool_call) + tool_calls(pending)
-            reasoning_metadata = (
-                self._build_reasoning_metadata(usage_data, finish_reason)
-                if reasoning_content else None
-            )
-            assistant_msg_id = session_manager.add_assistant_message_with_tool_calls(
-                session_id=session_id,
-                content=content,
-                tool_calls=formatted_calls,
-                parent_id=parent_id,
-                reasoning_content=reasoning_content,
-                reasoning_metadata=reasoning_metadata,
-            )
-
-            if content:
-                yield {"type": "delta", "content": content}
-
-            yield {"type": "tool_calls", "tool_calls": formatted_calls}
-
-            # 执行工具并更新 tool_calls 记录
-            next_messages, next_parent_id, tool_results_info = await self._execute_and_update_tool_calls(
-                formatted_calls, session_id, assistant_msg_id, model, supports_tools,
-            )
-            yield {"type": "tool_results", "tool_results": tool_results_info}
-            yield _Control(next_messages=next_messages, next_parent_id=next_parent_id)
-            return
-
-        # 普通回复 - 检查文本中是否包含工具调用
-        if content:
-            extracted_calls, parse_errors = self._extract_and_validate_tool_calls(
-                content, model_type="local"
-            )
-
-            if extracted_calls:
-                session_manager = get_session_manager()
-                assistant_msg_id = session_manager.add_assistant_message_with_tool_calls(
-                    session_id=session_id,
-                    content="",
-                    tool_calls=extracted_calls,
-                    parent_id=parent_id,
-                )
-                yield {"type": "content_replace", "content": ""}
-                yield {"type": "tool_calls", "tool_calls": extracted_calls}
-
-                next_messages, next_parent_id, tool_results_info = await self._execute_and_update_tool_calls(
-                    extracted_calls, session_id, assistant_msg_id, model, supports_tools,
-                )
-                yield {"type": "tool_results", "tool_results": tool_results_info}
-                yield _Control(next_messages=next_messages, next_parent_id=next_parent_id)
-                return
-
-            elif parse_errors:
-                # 按文档：参数校验异常时，终止回答用户问题
-                logger.debug(f"[工具参数校验异常] model={model}, 模型输出={content}, 异常原因={'; '.join(parse_errors)}")
-                MAX_FORMAT_RETRIES = 2
-                if format_retry_count >= MAX_FORMAT_RETRIES:
-                    error_msg = "模型多次输出非规范工具调用格式，已停止重试。错误详情：" + "; ".join(parse_errors)
-                    yield {"type": "error", "error": error_msg}
-                    yield {"type": "finish", "finish_reason": "stop"}
-                    return
-
-                session_manager = get_session_manager()
-                assistant_msg = session_manager.add_message(
-                    session_id=session_id,
-                    role="assistant",
-                    content=content,
-                    parent_id=parent_id,
-                )
-                error_feedback = "工具调用格式不规范，请使用 <tool_call 标签格式。错误详情：" + "; ".join(parse_errors)
-                session_manager.add_message(
-                    session_id=session_id,
-                    role="user",
-                    content=error_feedback,
-                    parent_id=assistant_msg.id,
-                )
-                yield {"type": "error", "error": error_feedback}
-
-                next_messages = await self._rebuild_context(session_id, model, supports_tools)
-                yield _Control(
-                    next_messages=next_messages,
-                    next_parent_id=assistant_msg.id,
-                    format_retry_count=format_retry_count + 1,
-                )
-                return
-
-            # 纯文本回复（无工具调用）
-            yield {"type": "delta", "content": content}
-            session_manager = get_session_manager()
-            usage_data = response.get("usage") or {}
-            reasoning_metadata = (
-                self._build_reasoning_metadata(usage_data, finish_reason)
-                if reasoning_content else None
-            )
-            session_manager.add_message(
-                session_id=session_id,
-                role="assistant",
-                content=content,
-                parent_id=parent_id,
-                reasoning_content=reasoning_content,
-                reasoning_metadata=reasoning_metadata,
-            )
-
-        yield {"type": "finish", "finish_reason": finish_reason}
-
-    # ------------------------------------------------------------------
     # 公共方法：工具执行与更新
     # ------------------------------------------------------------------
 
@@ -530,7 +351,6 @@ class ChatService:
         session_id: str,
         assistant_msg_id: str,
         model: str,
-        supports_tools: bool,
     ) -> tuple[list[dict], str, list[dict]]:
         """执行工具调用并更新 tool_calls 记录
 
@@ -581,30 +401,19 @@ class ChatService:
             })
 
         # 重建上下文（从数据库加载，tool 消息从 tool_calls 表动态生成）
-        new_messages = await self._rebuild_context(session_id, model, supports_tools)
+        new_messages = await self._rebuild_context(session_id, model)
         return new_messages, assistant_msg_id, tool_results_info
 
     async def _rebuild_context(
-        self, session_id: str, model: str, supports_tools: bool
+        self, session_id: str, model: str
     ) -> list[dict]:
         """重建LLM上下文（从数据库加载完整历史）"""
-        config = get_config()
-        provider = config.resolve_model_provider(model)
-        is_local = provider.get("provider") == "local"
+        tool_manager = get_tool_manager()
+        tool_schemas = await tool_manager.get_tool_schemas_for_llm()
 
-        context_manager = get_context_manager()
-        tool_schemas = None
-        if supports_tools:
-            tool_manager = get_tool_manager()
-            tool_schemas = await tool_manager.get_tool_schemas_for_llm()
-
-        return context_manager.build_llm_messages(
-            session_id=session_id,
-            new_messages=[],
-            tool_schemas=tool_schemas,
-            supports_tools=supports_tools,
-            is_local=is_local,
-            model=model,
+        context_engine = get_context_engine()
+        return context_engine.build_messages(
+            session_id=session_id, model=model, tool_schemas=tool_schemas,
         )
 
     # ------------------------------------------------------------------
@@ -652,14 +461,11 @@ class ChatService:
     # 文本工具调用提取与校验
     # ------------------------------------------------------------------
 
-    def _extract_and_validate_tool_calls(self, text: str, model_type: str = "standard") -> tuple[list[dict], list[str]]:
+    def _extract_and_validate_tool_calls(self, text: str) -> tuple[list[dict], list[str]]:
         """从文本中提取工具调用并校验参数
 
         Args:
-            text: 模型输出的文本
-            model_type: 模型类型
-                - "local": 本地模型（Arch-Agent-3B），只接受 TOOL_TAG 规范格式
-                - "standard": 星火模型等，接受 {"tool_calls": [...]} 格式
+            text: 模型输出的文本，接受 {"tool_calls": [...]} 格式
 
         返回: (tool_calls, parse_errors)
         """
@@ -669,81 +475,41 @@ class ChatService:
         raw_calls = []
         errors = []
 
-        if model_type == "local":
-            patterns = [
-                r'<tool_call\s*(\{.*?\})\s*</?tool_call',
-                r'\u003c\uff5ctool_call_begin\uff5c\u003e\s*(\{.*?\})\s*\u003c\uff5ctool_call_end\uff5c\u003e',
-                r'\u003c\uff5c\s*(\{.*?\})\s*\uff5c\u003e',
-            ]
-            matches = []
-            for p in patterns:
-                matches = re.findall(p, text, re.DOTALL)
-                if matches:
-                    break
-            if matches:
-                for i, match in enumerate(matches):
-                    try:
-                        parsed = json.loads(match)
-                        name = parsed.get("name", "")
-                        arguments = parsed.get("arguments", {})
-                        if isinstance(arguments, dict):
-                            arguments = json.dumps(arguments, ensure_ascii=False)
-                        raw_calls.append({
-                            "id": f"call_{uuid.uuid4().hex[:8]}",
-                            "type": "function",
-                            "function": {
-                                "name": name,
-                                "arguments": arguments,
-                            },
-                        })
-                    except (json.JSONDecodeError, KeyError) as e:
-                        errors.append(f"工具调用 #{i+1} JSON解析失败: {e}")
-            else:
-                non_standard_patterns = [
-                    (r"Action:\s*\w+", "检测到非规范的 Action: 格式，本地模型只接受 <tool_call 格式"),
-                    (r'"tool_calls"\s*:', "检测到非规范的 JSON tool_calls 格式，本地模型只接受 <tool_call 格式"),
-                ]
-                for pattern_str, error_msg in non_standard_patterns:
-                    if re.search(pattern_str, text):
-                        errors.append(error_msg)
-                        break
-
-        else:
-            tool_calls_idx = text.find('"tool_calls"')
-            if tool_calls_idx != -1:
-                start = text.rfind('{', 0, tool_calls_idx)
-                if start != -1:
-                    depth = 0
-                    end = start
-                    for i in range(start, len(text)):
-                        if text[i] == '{':
-                            depth += 1
-                        elif text[i] == '}':
-                            depth -= 1
-                            if depth == 0:
-                                end = i + 1
-                                break
-                    candidate = text[start:end]
-                    try:
-                        parsed = json.loads(candidate)
-                        if "tool_calls" in parsed:
-                            for tc in parsed.get("tool_calls", []):
-                                call_id = tc.get("id", f"call_{uuid.uuid4().hex[:8]}")
-                                func = tc.get("function", {})
-                                name = func.get("name", "")
-                                arguments = func.get("arguments", {})
-                                if isinstance(arguments, dict):
-                                    arguments = json.dumps(arguments, ensure_ascii=False)
-                                raw_calls.append({
-                                    "id": call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": name,
-                                        "arguments": arguments,
-                                    },
-                                })
-                    except (json.JSONDecodeError, KeyError) as e:
-                        errors.append(f"JSON解析失败: {e}")
+        tool_calls_idx = text.find('"tool_calls"')
+        if tool_calls_idx != -1:
+            start = text.rfind('{', 0, tool_calls_idx)
+            if start != -1:
+                depth = 0
+                end = start
+                for i in range(start, len(text)):
+                    if text[i] == '{':
+                        depth += 1
+                    elif text[i] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+                candidate = text[start:end]
+                try:
+                    parsed = json.loads(candidate)
+                    if "tool_calls" in parsed:
+                        for tc in parsed.get("tool_calls", []):
+                            call_id = tc.get("id", f"call_{uuid.uuid4().hex[:8]}")
+                            func = tc.get("function", {})
+                            name = func.get("name", "")
+                            arguments = func.get("arguments", {})
+                            if isinstance(arguments, dict):
+                                arguments = json.dumps(arguments, ensure_ascii=False)
+                            raw_calls.append({
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "arguments": arguments,
+                                },
+                            })
+                except (json.JSONDecodeError, KeyError) as e:
+                    errors.append(f"JSON解析失败: {e}")
 
         if not raw_calls:
             return [], errors
