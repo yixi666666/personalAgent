@@ -1,17 +1,25 @@
 <template>
   <div class="chat-area">
     <div class="chat-header">
-      <el-button
-        class="sidebar-toggle-btn"
-        text
-        @click="sidebarCollapsed = !sidebarCollapsed"
-      >
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="2" y="4" width="16" height="2" rx="1" fill="currentColor"/>
-          <rect x="2" y="9" width="16" height="2" rx="1" fill="currentColor"/>
-          <rect x="2" y="14" width="16" height="2" rx="1" fill="currentColor"/>
-        </svg>
-      </el-button>
+      <div class="sidebar-toggle-wrapper">
+        <el-button
+          class="sidebar-toggle-btn"
+          text
+          @click="sidebarCollapsed = !sidebarCollapsed"
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="2" y="4" width="16" height="2" rx="1" fill="currentColor"/>
+            <rect x="2" y="9" width="16" height="2" rx="1" fill="currentColor"/>
+            <rect x="2" y="14" width="16" height="2" rx="1" fill="currentColor"/>
+          </svg>
+        </el-button>
+        <div v-if="sidebarCollapsed" class="collapse-new-chat">
+          <el-button type="primary" @click="chatStore.newSession()">
+            <el-icon><Plus /></el-icon>
+            <span>新建会话</span>
+          </el-button>
+        </div>
+      </div>
       <span class="chat-title">
         {{ chatStore.currentSessionId
           ? (chatStore.currentSession?.title || '会话 ' + chatStore.currentSessionId.slice(0, 8))
@@ -183,7 +191,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, inject, onMounted } from 'vue'
-import { Promotion, ChatDotRound } from '@element-plus/icons-vue'
+import { Promotion, ChatDotRound, Plus } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 import MarkdownIt from 'markdown-it'
 import tm from 'markdown-it-texmath'
@@ -494,9 +502,14 @@ function handleSend() {
   right: 20px;
 }
 
-.sidebar-toggle-btn {
+.sidebar-toggle-wrapper {
   position: absolute;
   left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.sidebar-toggle-btn {
   padding: 6px 10px;
   color: #606266;
   background: #f5f7fa;
@@ -508,6 +521,31 @@ function handleSend() {
   color: #409eff;
   background: #ecf5ff;
   border-color: #b3d8ff;
+}
+
+.collapse-new-chat {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 12px;
+  width: 236px;
+  z-index: 100;
+}
+
+.collapse-new-chat .el-button {
+  width: 100%;
+}
+
+.sidebar-toggle-wrapper:hover .collapse-new-chat {
+  opacity: 1;
+  visibility: visible;
 }
 
 .message-list {

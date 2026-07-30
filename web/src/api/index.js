@@ -7,7 +7,7 @@ const api = axios.create({
 })
 
 export async function chatCompletionsStream(prompt, sessionId = '', model = 'glm-4.7-flash', deepThinking = false, onChunk = () => {}, onDone = () => {}, onError = () => {}) {
-  const payload = { session_id: sessionId, model, prompt, stream: true, deep_thinking: deepThinking }
+  const payload = { session_id: sessionId, model, prompt, deep_thinking: deepThinking }
 
   try {
     const response = await fetch('/v1/chat/completions', {
