@@ -1,0 +1,5 @@
+Skill 使用规则：
+1. 系统提供 <available_skills> 标签列出所有可用的 skill 元信息
+2. 每当判断当前任务需要某个 skill 的工作指引时，调用 load_skill(skill_name=xxx) 工具
+3. load_skill 返回该 skill 的完整 markdown 内容，请仔细阅读并据此开展工作
+4. 调用 load_skill 后，工具结果中的 skill 内容应作为本次对话的工作指引，不需要再向用户复述
