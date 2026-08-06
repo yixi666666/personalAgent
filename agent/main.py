@@ -52,13 +52,13 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("数据库初始化完成")
 
-    logger.info("正在从toolService获取工具列表...")
+    logger.info("正在从capabilityService获取工具列表...")
     tool_manager = get_tool_manager()
     try:
         await tool_manager.refresh_tools()
         logger.info(f"工具列表获取完成，共 {len(tool_manager._tools)} 个工具")
     except Exception as e:
-        logger.warning(f"从toolService获取工具列表失败: {e}，将在后台重试")
+        logger.warning(f"从capabilityService获取工具列表失败: {e}，将在后台重试")
 
     tool_manager.start_refresh_task()
 

@@ -10,7 +10,7 @@ logging:
   level: "DEBUG"
   format: "%(asctime)s - %(name)-20s - %(levelname)s - %(message)s"
 
-toolservice:
+capabilityservice:
   url: "http://localhost:8003"
   refresh_interval: 300
   call_timeout: 10

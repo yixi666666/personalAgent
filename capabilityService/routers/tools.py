@@ -1,13 +1,13 @@
 import logging
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from toolService.models.schemas import (
+from capabilityService.models.schemas import (
     ToolCallRequest,
     ToolCallResponse,
     ToolListResponse,
     ToolMetadata,
 )
-from toolService.services.tool_registry import get_tool_registry
+from capabilityService.services.tool_registry import get_tool_registry
 
 logger = logging.getLogger(__name__)
 

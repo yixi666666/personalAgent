@@ -6,13 +6,13 @@ from typing import Any, Dict, List, Optional
 
 import jsonschema
 
-from toolService.models.states import McpServerState, ToolState
-from toolService.models.tool import Tool
-from toolService.services.lifecycles.internal_tool import InternalToolLifecycle
-from toolService.services.lifecycles.local_mcp_tool import LocalMcpToolLifecycle
-from toolService.services.lifecycles.remote_mcp_tool import RemoteMcpToolLifecycle
-from toolService.services.lifecycles.local_mcp_server import LocalMcpServer
-from toolService.services.lifecycles.remote_mcp_server import RemoteMcpServer
+from capabilityService.models.states import McpServerState, ToolState
+from capabilityService.models.tool import Tool
+from capabilityService.services.lifecycles.internal_tool import InternalToolLifecycle
+from capabilityService.services.lifecycles.local_mcp_tool import LocalMcpToolLifecycle
+from capabilityService.services.lifecycles.remote_mcp_tool import RemoteMcpToolLifecycle
+from capabilityService.services.lifecycles.local_mcp_server import LocalMcpServer
+from capabilityService.services.lifecycles.remote_mcp_server import RemoteMcpServer
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class ToolRegistry:
 
     async def initialize(self):
         """初始化：按 tools.yaml 配置注册所有工具"""
-        from toolService.config import get_config
+        from capabilityService.config import get_config
         config = get_config()
 
         # 1. 注册自研工具

@@ -3,8 +3,8 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from toolService.models.mcp_lifecycle import McpLifecycle
-from toolService.models.states import McpServerState
+from capabilityService.models.mcp_lifecycle import McpLifecycle
+from capabilityService.models.states import McpServerState
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class RemoteMcpServer(McpLifecycle):
                 result = await self._send_request("initialize", {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
-                    "clientInfo": {"name": f"toolservice-{self._name}", "version": "1.0.0"},
+                    "clientInfo": {"name": f"capabilityservice-{self._name}", "version": "1.0.0"},
                 })
                 if result:
                     self._session_id = result.get("sessionId")

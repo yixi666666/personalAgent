@@ -2,9 +2,9 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from toolService.config import get_config
-from toolService.routers import tools
-from toolService.services.tool_registry import get_tool_registry
+from capabilityService.config import get_config
+from capabilityService.routers import tools
+from capabilityService.services.tool_registry import get_tool_registry
 
 
 @asynccontextmanager
@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="工具服务 (ToolService)",
+    title="能力服务 (CapabilityService)",
     description="统一工具管理服务，支持自研工具、本地MCP工具和远程MCP工具",
     version="1.0.0",
     lifespan=lifespan,
@@ -68,7 +68,7 @@ app.include_router(tools.router, tags=["工具服务"])
 @app.get("/")
 def root():
     return {
-        "service": "工具服务 (ToolService)",
+        "service": "能力服务 (CapabilityService)",
         "version": "1.0.0",
         "docs": "/docs",
     }

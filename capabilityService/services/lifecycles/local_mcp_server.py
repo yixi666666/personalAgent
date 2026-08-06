@@ -3,8 +3,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from toolService.models.mcp_lifecycle import McpLifecycle
-from toolService.models.states import McpServerState
+from capabilityService.models.mcp_lifecycle import McpLifecycle
+from capabilityService.models.states import McpServerState
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +264,7 @@ class LocalMcpServer(McpLifecycle):
             )
 
         # 通过 HTTP 连接
-        from toolService.services.lifecycles.remote_mcp_server import RemoteMcpServer
+        from capabilityService.services.lifecycles.remote_mcp_server import RemoteMcpServer
 
         self._http_client = RemoteMcpServer(self._server_name, self.url)
         connected = await self._http_client.connect()

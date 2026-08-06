@@ -61,20 +61,20 @@ class Config:
         )
 
     @property
-    def toolservice(self) -> dict:
-        return _settings.get("toolservice", {})
+    def capabilityservice(self) -> dict:
+        return _settings.get("capabilityservice", {})
 
     @property
-    def toolservice_url(self) -> str:
-        return _settings.get("toolservice", {}).get("url", "http://localhost:8003")
+    def capabilityservice_url(self) -> str:
+        return _settings.get("capabilityservice", {}).get("url", "http://localhost:8003")
 
     @property
-    def toolservice_refresh_interval(self) -> int:
-        return _settings.get("toolservice", {}).get("refresh_interval", 300)
+    def capabilityservice_refresh_interval(self) -> int:
+        return _settings.get("capabilityservice", {}).get("refresh_interval", 300)
 
     @property
     def tool_call_timeout(self) -> int:
-        return _settings.get("toolservice", {}).get("call_timeout", 10)
+        return _settings.get("capabilityservice", {}).get("call_timeout", 10)
 
     @property
     def providers(self) -> dict:

@@ -2,8 +2,8 @@ import asyncio
 import logging
 from typing import Any, Dict
 
-from toolService.models.tool_lifecycle import ToolLifecycle
-from toolService.models.states import ToolState
+from capabilityService.models.tool_lifecycle import ToolLifecycle
+from capabilityService.models.states import ToolState
 
 logger = logging.getLogger(__name__)
 

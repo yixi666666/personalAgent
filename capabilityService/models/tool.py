@@ -3,7 +3,7 @@ import functools
 from dataclasses import dataclass
 from typing import Any, Callable, Dict
 
-from toolService.models.tool_lifecycle import ToolLifecycle
+from capabilityService.models.tool_lifecycle import ToolLifecycle
 
 
 @dataclass
