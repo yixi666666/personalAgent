@@ -40,10 +40,30 @@ class ToolRegistry:
     async def initialize(self):
         """初始化：按 tools.yaml 配置注册所有工具"""
         from capabilityService.config import get_config
+        from capabilityService.services.skill_registry import get_skill_registry
+        from capabilityService.tools.load_skill import LoadSkillTool
+
         config = get_config()
+
+        # 0. 扫描 skills 目录（LoadSkillTool 依赖其元信息）
+        get_skill_registry().initialize()
 
         # 1. 注册自研工具
         await self._register_internal_tools(config.internal_tools)
+
+        # 1.5 动态注册 load_skill 工具（不走 tools.yaml）
+        try:
+            load_skill_tool = LoadSkillTool()
+            lifecycle = InternalToolLifecycle(load_skill_tool.execute, server_id="internal")
+            self._tools[load_skill_tool.name] = Tool(
+                name=load_skill_tool.name,
+                description=load_skill_tool.description,
+                parameters=load_skill_tool.parameters,
+                lifecycle=lifecycle,
+            )
+            logger.info(f"注册自研工具: {load_skill_tool.name} (skill loader)")
+        except Exception as e:
+            logger.error(f"注册 load_skill 工具失败: {e}")
 
         # 2. 连接本地 MCP 服务器
         await self._connect_local_mcp_servers(config.local_mcp)

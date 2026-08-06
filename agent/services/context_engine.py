@@ -159,19 +159,43 @@ class PromptBuilder:
         provider: dict,
         tool_schemas: list[dict] | None,
     ) -> str:
-        base = self._load_prompt("system-prompt-base.txt")
+        from agent.services.skill_manager import get_skill_manager
 
-        if not tool_schemas:
-            return base
+        parts = [self._load_prompt("system-prompt-base.txt")]
 
-        supports_tools = provider.get("supports_tools", True)
+        # 注入 skill 元信息（仅当 skills 非空时）
+        skills_meta = get_skill_manager().get_skills_meta()
+        if skills_meta:
+            skills_format = self._load_prompt("skills-format.txt")
+            available_skills_xml = self._render_available_skills(skills_meta)
+            parts.append(skills_format)
+            parts.append(available_skills_xml)
 
-        if supports_tools:
-            return base
-        else:
-            tool_format = self._load_prompt("tool-call-format.txt")
-            tool_desc = self._format_tool_descriptions(tool_schemas)
-            return f"{base}\n\n{tool_format}\n\n你可以借助以下工具来协助回答用户问题：\n{tool_desc}"
+        # 注入 tool-call-format（仅当 supports_tools=False 且有工具时）
+        if tool_schemas:
+            supports_tools = provider.get("supports_tools", True)
+            if not supports_tools:
+                tool_format = self._load_prompt("tool-call-format.txt")
+                tool_desc = self._format_tool_descriptions(tool_schemas)
+                parts.append(tool_format)
+                parts.append(f"你可以借助以下工具来协助回答用户问题：\n{tool_desc}")
+
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _render_available_skills(skills_meta: list[dict]) -> str:
+        """渲染 <available_skills> XML 标签"""
+        items = []
+        for skill in skills_meta:
+            name = skill.get("name", "")
+            desc = skill.get("description", "")
+            items.append(
+                f"  <skill>\n"
+                f"    <name>{name}</name>\n"
+                f"    <description>{desc}</description>\n"
+                f"  </skill>"
+            )
+        return "<available_skills>\n" + "\n".join(items) + "\n</available_skills>"
 
     @staticmethod
     def _format_tool_descriptions(tool_schemas: list[dict]) -> str:

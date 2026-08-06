@@ -22,6 +22,16 @@ class ToolListResponse(BaseModel):
     tools: list[ToolMetadata]
 
 
+class SkillMetadata(BaseModel):
+    name: str
+    description: str
+    version: str = ""
+
+
+class SkillListResponse(BaseModel):
+    skills: list[SkillMetadata]
+
+
 class ErrorResponse(BaseModel):
     code: str
     message: str

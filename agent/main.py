@@ -6,6 +6,7 @@ from agent.config import get_config
 from agent.database import init_db, close_db
 from agent.routers import chat, sessions, models
 from agent.services.tool_manager import get_tool_manager
+from agent.services.skill_manager import get_skill_manager
 from agent.services.llm_client import get_llm_client
 
 
@@ -62,11 +63,23 @@ async def lifespan(app: FastAPI):
 
     tool_manager.start_refresh_task()
 
+    logger.info("正在从capabilityService获取skill列表...")
+    skill_manager = get_skill_manager()
+    try:
+        await skill_manager.refresh_skills()
+        logger.info(f"Skill 列表获取完成，共 {len(skill_manager._skills)} 个 skill")
+    except Exception as e:
+        logger.warning(f"从capabilityService获取skill列表失败: {e}，将在后台重试")
+
+    skill_manager.start_refresh_task()
+
     logger.info(f"智能聊天Agent系统启动 - 端口: {config.server_port}")
     yield
 
     logger.info("正在关闭服务...")
     tool_manager.stop_refresh_task()
+    skill_manager.stop_refresh_task()
+    await skill_manager.close()
     llm_client = get_llm_client()
     await llm_client.close()
     close_db()

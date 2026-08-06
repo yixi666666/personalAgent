@@ -55,12 +55,12 @@ class Config:
     @property
     def local_mcp(self) -> list[dict]:
         """本地MCP工具配置列表，每项含 name/command/args/transport/env/workdir/retry"""
-        return _tools_data.get("local_mcp", [])
+        return _tools_data.get("local_mcp") or []
 
     @property
     def remote_mcp(self) -> list[dict]:
         """远程MCP工具配置列表，每项含 name/url/auth/max_retries"""
-        return _tools_data.get("remote_mcp", [])
+        return _tools_data.get("remote_mcp") or []
 
     def get(self, key: str, default: Any = None) -> Any:
         return _settings.get(key, default)

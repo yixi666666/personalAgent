@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from capabilityService.config import get_config
-from capabilityService.routers import tools
+from capabilityService.routers import tools, skills
 from capabilityService.services.tool_registry import get_tool_registry
 
 
@@ -63,6 +63,7 @@ app.add_middleware(
 )
 
 app.include_router(tools.router, tags=["工具服务"])
+app.include_router(skills.router, tags=["技能服务"])
 
 
 @app.get("/")
