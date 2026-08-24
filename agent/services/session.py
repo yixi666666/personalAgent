@@ -264,6 +264,17 @@ class SessionManager:
                         metadata = json.loads(mc["metadata"])
                     except (json.JSONDecodeError, TypeError):
                         metadata = None
+                # 方式A：todo_write 的 tool_calls 不懒加载，内联完整数据
+                if mc["type"] == "tool_call" and metadata and metadata.get("tool_name") == "todo_write":
+                    call_id = mc["content"]
+                    tc_row = db.execute(
+                        "SELECT parameters, status, result FROM tool_calls WHERE message_id = ? AND call_id = ?",
+                        (row["id"], call_id),
+                    ).fetchone()
+                    if tc_row:
+                        metadata["parameters"] = json.loads(tc_row["parameters"]) if tc_row["parameters"] else None
+                        metadata["status"] = tc_row["status"]
+                        metadata["result"] = tc_row["result"]
                 contents.append(ContentItem(
                     type=mc["type"],
                     content=mc["content"],
