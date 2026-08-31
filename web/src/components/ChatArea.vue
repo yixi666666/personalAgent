@@ -142,6 +142,28 @@
       </div>
     </div>
 
+    <!-- Todo 面板：输入框上方，可折叠 -->
+    <div v-if="chatStore.currentTodos" class="todo-panel-wrapper">
+      <el-collapse v-model="todoExpanded">
+        <el-collapse-item name="todo">
+          <template #title>
+            <span class="todo-panel-title">📋 任务计划</span>
+          </template>
+          <div class="todo-list">
+            <div
+              v-for="(todo, tIdx) in chatStore.currentTodos.todos"
+              :key="tIdx"
+              class="todo-item"
+              :class="todo.status"
+            >
+              <span class="todo-status" :class="todo.status"></span>
+              <span class="todo-action">{{ todo.action }}</span>
+            </div>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
+    </div>
+
     <div class="chat-input-wrapper">
       <div class="chat-input">
         <el-input
@@ -222,6 +244,7 @@ const inputText = ref('')
 const messageListRef = ref(null)
 const inputRef = ref(null)
 const isUserAtBottom = ref(true)
+const todoExpanded = ref(['todo'])
 const sidebarCollapsed = inject('sidebarCollapsed')
 
 const MAX_INPUT_HEIGHT = 300 // px，约12行
@@ -744,6 +767,94 @@ function handleSend() {
 
 .reasoning-section {
   margin-bottom: 4px;
+}
+
+/* Todo 面板 */
+.todo-panel-wrapper {
+  flex-shrink: 0;
+  border-top: 1px solid #e4e7ed;
+  background: #f9fafb;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.todo-panel-wrapper :deep(.el-collapse) {
+  border: none;
+}
+
+.todo-panel-wrapper :deep(.el-collapse-item__header) {
+  background: transparent;
+  border-bottom: 1px solid #ebeef5;
+  padding: 0 16px;
+  height: 38px;
+  line-height: 38px;
+}
+
+.todo-panel-wrapper :deep(.el-collapse-item__wrap) {
+  border-bottom: none;
+  background: transparent;
+}
+
+.todo-panel-wrapper :deep(.el-collapse-item__content) {
+  padding: 10px 16px 12px;
+}
+
+.todo-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.todo-item .todo-status {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.todo-item.pending .todo-status {
+  border: 2px solid #c0c4cc;
+  background: transparent;
+}
+
+.todo-item.in_progress .todo-status {
+  border: 2px solid #409eff;
+  background: #409eff;
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
+}
+
+.todo-item.completed .todo-status {
+  border: 2px solid #67c23a;
+  background: #67c23a;
+}
+
+.todo-item.completed .todo-action {
+  color: #909399;
+  text-decoration: line-through;
+}
+
+.todo-item.in_progress .todo-action {
+  color: #303133;
+  font-weight: 500;
+}
+
+.todo-item.pending .todo-action {
+  color: #909399;
 }
 
 .reasoning-title {

@@ -19,6 +19,22 @@ export const useChatStore = defineStore('chat', () => {
     return sessions.value.find(s => s.id === currentSessionId.value) || null
   })
 
+  // 只从最新一条 assistant 消息中提取最新的 todoData
+  const currentTodos = computed(() => {
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const msg = messages.value[i]
+      if (msg.role !== 'assistant') continue
+      const blocks = msg.blocks || []
+      for (let j = blocks.length - 1; j >= 0; j--) {
+        if (blocks[j].type === 'tool_call' && blocks[j].todoData) {
+          return blocks[j].todoData
+        }
+      }
+      return null
+    }
+    return null
+  })
+
   async function loadSessionsData() {
     try {
       const data = await listSessions()
@@ -45,9 +61,8 @@ export const useChatStore = defineStore('chat', () => {
       } else if (c.type === 'tool_call') {
         const callId = c.content
         const tc = toolCallsMap[callId]
-        // 优先从 metadata.tool_name 取工具名（后端已存储），避免历史会话显示"未知"
         const toolName = (c.metadata && c.metadata.tool_name) || '未知'
-        blocks.push({
+        const block = {
           type: 'tool_call',
           _messageId: messageId,
           toolCall: tc || {
@@ -57,7 +72,16 @@ export const useChatStore = defineStore('chat', () => {
             result: null,
             status: 'unknown',
           },
-        })
+        }
+        // todo_write 的 tool_call 内联完整数据（方式A，不懒加载）
+        if (toolName === 'todo_write' && c.metadata && c.metadata.parameters) {
+          block.todoData = {
+            todos: c.metadata.parameters.todos || [],
+            status: c.metadata.status,
+            result: c.metadata.result,
+          }
+        }
+        blocks.push(block)
       }
     }
     return blocks
@@ -212,7 +236,16 @@ export const useChatStore = defineStore('chat', () => {
             pendingStreamToolCalls = chunk.tool_calls
             // 插入 tool_call blocks
             for (const tc of chunk.tool_calls) {
-              blocks.push({ type: 'tool_call', toolCall: tc })
+              const block = { type: 'tool_call', toolCall: tc }
+              // todo_write 流式时解析 arguments 携带 todoData
+              if (tc.function?.name === 'todo_write') {
+                try {
+                  const args = typeof tc.function.arguments === 'string'
+                    ? JSON.parse(tc.function.arguments) : tc.function.arguments
+                  block.todoData = { todos: args.todos || [], status: 'pending', result: null }
+                } catch {}
+              }
+              blocks.push(block)
             }
             // 重置流式状态，下一轮重新开始
             streamingReasoning.value = ''
@@ -230,6 +263,11 @@ export const useChatStore = defineStore('chat', () => {
                 if (b.type === 'tool_call' && b.toolCall.id === tr.id) {
                   b.toolCall.result = tr.result
                   b.toolCall.status = tr.status
+                  // todo_write 回填 result
+                  if (b.todoData) {
+                    b.todoData.result = tr.result
+                    b.todoData.status = tr.status
+                  }
                 }
               }
             }
@@ -343,6 +381,7 @@ export const useChatStore = defineStore('chat', () => {
     streaming,
     deepThinking,
     currentSession,
+    currentTodos,
     loadSessions: loadSessionsData,
     loadSession: loadSessionData,
     removeSession,

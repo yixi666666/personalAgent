@@ -11,6 +11,8 @@ internal_tools:
     handler: capabilityService.tools.date_info.DateInfoTool
   - name: rag_search
     handler: capabilityService.tools.rag_search.RagSearchTool
+  - name: todo_write
+    handler: capabilityService.tools.todo_write.TodoWriteTool
 
 # ============================================================
 # 本地 MCP 工具：配置启动命令和参数，工具服务以子进程方式管理
