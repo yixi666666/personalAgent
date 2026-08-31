@@ -179,7 +179,7 @@
           type="primary"
           :icon="Promotion"
           :loading="chatStore.loading"
-          :disabled="!inputText.trim() || chatStore.loading"
+          :disabled="!inputText.trim() || chatStore.loading || !chatStore.currentModel"
           @click="handleSend"
         >
           发送

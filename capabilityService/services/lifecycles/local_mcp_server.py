@@ -283,7 +283,7 @@ class LocalMcpServer(McpLifecycle):
             tools.append({
                 "name": tool.name,
                 "description": tool.description or "",
-                "parameters": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                "parameters": tool.input_schema if hasattr(tool, "input_schema") else (tool.inputSchema if hasattr(tool, "inputSchema") else {}),
             })
             self._tool_names.append(tool.name)
         return tools

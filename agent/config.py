@@ -28,6 +28,10 @@ class Config:
         return _settings.get("server", {}).get("port", 8002)
 
     @property
+    def max_tool_rounds(self) -> int:
+        return _settings.get("agent", {}).get("max_tool_rounds", 10)
+
+    @property
     def database(self) -> dict:
         return _settings.get("database", {})
 
@@ -75,6 +79,10 @@ class Config:
     @property
     def tool_call_timeout(self) -> int:
         return _settings.get("capabilityservice", {}).get("call_timeout", 10)
+
+    @property
+    def default_model(self) -> Optional[str]:
+        return _settings.get("default_model")
 
     @property
     def providers(self) -> dict:

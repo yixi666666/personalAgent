@@ -33,4 +33,5 @@ class ModelInfo(BaseModel):
 
 
 class ModelListResponse(BaseModel):
+    default_model: Optional[str] = None
     models: list[ModelInfo]

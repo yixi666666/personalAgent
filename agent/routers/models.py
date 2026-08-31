@@ -32,4 +32,10 @@ def list_models():
                 ),
             )
         )
-    return ModelListResponse(models=models)
+    model_ids = {model.id for model in models}
+    default_model = config.default_model
+    if default_model not in model_ids:
+        if default_model:
+            logger.error("默认模型不存在于模型列表中: %s", default_model)
+        default_model = None
+    return ModelListResponse(default_model=default_model, models=models)

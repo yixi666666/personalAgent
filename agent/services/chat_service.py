@@ -10,8 +10,6 @@ from agent.config import get_config
 
 logger = logging.getLogger(__name__)
 
-MAX_TOOL_ROUNDS = 10
-
 
 class _Control:
     """内部控制信号，用于工具循环传递 next_messages 等信息"""
@@ -80,17 +78,18 @@ class ChatService:
 
         本地模型（Arch-Agent-3B）使用 stream=false + tools 非流式路径，
         其他模型使用 stream=true 流式路径。
-        工具调用循环使用迭代而非递归，最多 MAX_TOOL_ROUNDS 轮。
+        工具调用循环使用迭代而非递归，最多配置的 max_tool_rounds 轮。
         """
         config = get_config()
         provider = config.resolve_model_provider(model)
         supports_tools = provider.get("supports_tools", True)
+        max_tool_rounds = config.max_tool_rounds
 
         current_messages = messages
         current_parent_id = parent_id
         format_retry_count = 0
 
-        for _round in range(MAX_TOOL_ROUNDS):
+        for _round in range(max_tool_rounds):
             round_num = _round + 1
             control = None
 
@@ -121,7 +120,7 @@ class ChatService:
 
             return
 
-        yield {"type": "error", "error": f"工具调用超过最大轮次限制({MAX_TOOL_ROUNDS})"}
+        yield {"type": "error", "error": f"工具调用超过最大轮次限制({max_tool_rounds})"}
         yield {"type": "finish", "finish_reason": "stop"}
 
     # ------------------------------------------------------------------

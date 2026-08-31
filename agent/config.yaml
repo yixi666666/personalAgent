@@ -2,6 +2,9 @@ server:
   host: "0.0.0.0"
   port: 8002
 
+agent:
+  max_tool_rounds: 10
+
 database:
   path: "./data/chatAgent.sqlite"
   echo: false
@@ -13,7 +16,9 @@ logging:
 capabilityservice:
   url: "http://localhost:8003"
   refresh_interval: 300
-  call_timeout: 10
+  call_timeout: 60
+
+default_model: "GPT-5.6 Sol"
 
 providers:
   deepseek:
@@ -77,6 +82,23 @@ providers:
     api_key: "@format {env[GLM_API_KEY]}"
     supports_tools: true
     deep_thinking: true
+    web_search: false
+    structured_output: true
+    multimodal: false
+    streaming: true
+    stop_anytime: true
+    context_window: 128000        # 128K
+
+  openai:
+    name: "GPT-5.6 Sol"
+    display_name: "GPT-5.6 Sol"
+    base_url: "https://subapi.wenjianyyds.top"
+    api_prefix: "/v1"
+    max_tokens: 4096
+    temperature: 0.7
+    api_key: "@format {env[OPENAI_API_KEY]}"
+    supports_tools: true
+    deep_thinking: false
     web_search: false
     structured_output: true
     multimodal: false

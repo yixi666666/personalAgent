@@ -7,7 +7,7 @@ export const useChatStore = defineStore('chat', () => {
   const currentSessionId = ref(null)
   const messages = ref([])
   const loading = ref(false)
-  const currentModel = ref('glm-4.7-flash')
+  const currentModel = ref(null)
   const models = ref([])
   const tools = ref([])
   const streamingContent = ref('')
@@ -140,7 +140,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function sendMessage(prompt) {
-    if (!prompt.trim() || loading.value) return
+    if (!prompt.trim() || loading.value || !currentModel.value) return
 
     loading.value = true
     streaming.value = true
@@ -272,7 +272,12 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const data = await listModels()
       models.value = data.models || []
+      currentModel.value = models.value.some(model => model.id === data.default_model)
+        ? data.default_model
+        : null
     } catch (err) {
+      models.value = []
+      currentModel.value = null
       console.error('加载模型列表失败:', err)
     }
   }
