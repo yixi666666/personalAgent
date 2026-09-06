@@ -41,9 +41,6 @@ class Config:
         if not os.path.isabs(path):
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             path = os.path.join(project_root, path)
-        db_dir = os.path.dirname(path)
-        if db_dir and not os.path.exists(db_dir):
-            os.makedirs(db_dir, exist_ok=True)
         return path
 
     @property

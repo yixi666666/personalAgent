@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from agent.config import get_config
-from agent.database import init_db, close_db
+from agent.database import get_db, close_db
 from agent.routers import chat, sessions, models
 from agent.services.tool_manager import get_tool_manager
 from agent.services.skill_manager import get_skill_manager
@@ -49,9 +49,9 @@ async def lifespan(app: FastAPI):
         handler.setFormatter(FixedWidthFormatter(config.log_format, name_width=_name_width))
 
     logger = logging.getLogger(__name__)
-    logger.info("正在初始化数据库...")
-    init_db()
-    logger.info("数据库初始化完成")
+    logger.info("正在检查数据库...")
+    get_db()
+    logger.info("数据库检查完成")
 
     logger.info("正在从capabilityService获取工具列表...")
     tool_manager = get_tool_manager()
