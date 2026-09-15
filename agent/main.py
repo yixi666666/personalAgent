@@ -57,17 +57,15 @@ async def lifespan(app: FastAPI):
     tool_manager = get_tool_manager()
     try:
         await tool_manager.refresh_tools()
-        logger.info(f"工具列表获取完成，共 {len(tool_manager._tools)} 个工具")
     except Exception as e:
         logger.warning(f"从capabilityService获取工具列表失败: {e}，将在后台重试")
 
     tool_manager.start_refresh_task()
 
-    logger.info("正在从capabilityService获取skill列表...")
+    logger.debug("正在从capabilityService获取skill列表...")
     skill_manager = get_skill_manager()
     try:
         await skill_manager.refresh_skills()
-        logger.info(f"Skill 列表获取完成，共 {len(skill_manager._skills)} 个 skill")
     except Exception as e:
         logger.warning(f"从capabilityService获取skill列表失败: {e}，将在后台重试")
 

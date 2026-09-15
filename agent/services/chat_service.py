@@ -6,6 +6,8 @@ from agent.services.llm_client import get_llm_client
 from agent.services.context_engine import get_context_engine
 from agent.services.session import get_session_manager
 from agent.services.tool_manager import get_tool_manager
+from agent.services.query_understanding import get_query_understanding_service
+from agent.services.recall_agent import get_recall_agent_service
 from agent.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -33,7 +35,10 @@ class ChatService:
     async def prepare_session(
         self, session_id: Optional[str], prompt: str, model: str
     ) -> tuple[str, list[dict], str]:
-        """准备会话：创建或获取会话，保存用户消息，构建LLM上下文
+        """准备会话：创建或获取会话，保存用户消息，执行前置步骤，构建LLM上下文
+
+        前置步骤：高校识别 + Fact 召回，结果作为 tool_call 写入 DB，
+        聊天 Agent 从对话历史中自然读到。
 
         返回: (session_id, llm_messages, user_msg_id)
         """
@@ -54,6 +59,9 @@ class ChatService:
             parent_id=parent_id,
         )
 
+        # ---- 前置步骤：高校识别 + Fact 召回 ----
+        await self._run_pre_retrieval(session_id, prompt, user_msg.id)
+
         tool_manager = get_tool_manager()
         tool_schemas = await tool_manager.get_tool_schemas_for_llm()
 
@@ -63,6 +71,98 @@ class ChatService:
         )
 
         return session_id, llm_messages, user_msg.id
+
+    async def _run_pre_retrieval(self, session_id: str, user_query: str, user_msg_id: str):
+        """前置步骤：高校识别 + 迭代式 Fact 召回，每轮结果写入 DB tool_calls
+
+        流程：
+        1. 从 DB 加载对话历史
+        2. 查询理解：模糊匹配 + 语义匹配 + LLM → confirmed 高校列表（含 requirements）
+        3. 迭代式召回（最多3轮）：
+           - 每轮：召回 Agent 生成 queries → 双路召回 → 判断 sufficient
+           - sufficient=true 则停止
+           - 每轮召回结果作为一条 university_recall tool_call 写入 DB
+        """
+        session_manager = get_session_manager()
+
+        # 1. 加载对话历史
+        history = session_manager.get_messages(session_id)
+
+        # 2. 查询理解
+        qu_service = get_query_understanding_service()
+        qu_result = await qu_service.understand(user_query, history)
+
+        confirmed = qu_result.get("confirmed", [])
+        if not confirmed:
+            logger.info("[前置步骤] 无confirmed高校，跳过")
+            return
+
+        # 3. 迭代式召回
+        recall_agent = get_recall_agent_service()
+        rounds = await recall_agent.iterative_recall(user_query, confirmed, history)
+
+        if not rounds:
+            logger.info("[前置步骤] 召回无结果，跳过")
+            return
+
+        # 4. 每轮召回结果写一条 university_recall tool_call
+        tool_name = "university_recall"
+        current_parent_id = user_msg_id
+
+        round_summaries = []
+        for rd in rounds:
+            round_num = rd["round"]
+            queries_by_uni = rd.get("queries_by_uni", {})
+            recall_result = rd.get("recall_result", {})
+            sufficient = rd.get("sufficient", False)
+
+            # sufficient=true 的轮次没有实际召回结果，跳过写入
+            if sufficient and not recall_result.get("universities"):
+                round_summaries.append(f"第{round_num}轮 sufficient=true 跳过")
+                continue
+
+            call_id = f"call_{uuid.uuid4().hex[:8]}"
+            tool_parameters = json.dumps(
+                [
+                    {"name": uni_name, "queries": queries}
+                    for uni_name, queries in queries_by_uni.items()
+                ],
+                ensure_ascii=False,
+            )
+            from agent.services.retrieval import RetrievalService
+            tool_result = RetrievalService.format_recall_xml(recall_result)
+
+            assistant_msg_id = session_manager.add_assistant_message_with_tool_calls(
+                session_id=session_id,
+                content="",
+                tool_calls=[{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": tool_name, "arguments": tool_parameters},
+                }],
+                parent_id=current_parent_id,
+            )
+
+            session_manager.update_tool_call(
+                call_id=call_id,
+                message_id=assistant_msg_id,
+                result=tool_result,
+                status="success",
+            )
+
+            # 链式关联：下一轮的 parent 指向当前轮的 assistant 消息
+            current_parent_id = assistant_msg_id
+
+            facts_count = sum(
+                len(u.get("facts", []))
+                for u in recall_result.get("universities", [])
+            )
+            uni_names = [u["name"] for u in recall_result.get("universities", [])]
+            round_summaries.append(
+                f"第{round_num}轮 {len(uni_names)}所高校 {facts_count}条fact ({', '.join(uni_names)})"
+            )
+
+        logger.info(f"[前置步骤] 召回完成 {' | '.join(round_summaries)}")
 
     async def stream_chat(
         self,
@@ -152,7 +252,7 @@ class ChatService:
         tool_calls_buffer = []
         usage_data = {}
         model_name = ""
-        round_prefix = f"【第{round_num}轮】" if round_num == 1 else f"[第{round_num}轮]"
+        round_prefix = f"[聊天Agent][第{round_num}轮]"
 
         async for chunk in llm_client.chat_stream(
             messages=messages,
@@ -163,6 +263,7 @@ class ChatService:
             supports_tools=supports_tools,
             deep_thinking=deep_thinking,
             round_num=round_num,
+            agent_name="聊天Agent",
         ):
             # 收集 usage 和 model
             if chunk.get("usage"):

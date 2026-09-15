@@ -61,6 +61,7 @@ class LLMClient:
         supports_tools: bool = True,
         deep_thinking: bool = False,
         round_num: int = 1,
+        agent_name: str = "聊天Agent",
     ) -> dict:
         """非流式调用LLM（用于本地模型 stream=false + tools）"""
         provider = self._resolve_provider(model)
@@ -81,13 +82,13 @@ class LLMClient:
         if extra_body:
             kwargs["extra_body"] = extra_body
 
-        round_prefix = f"【第{round_num}轮】" if round_num == 1 else f"[第{round_num}轮]"
-        logger.debug(f"{round_prefix} 模型调用 >>> kwargs={json.dumps(kwargs, ensure_ascii=False)}")
+        round_prefix = f"[{agent_name}][第{round_num}轮]"
+        logger.info(f"{round_prefix} 模型调用(非流式) >>> {json.dumps(kwargs, ensure_ascii=False)}")
 
         try:
             response = await client.chat.completions.create(**kwargs)
             result = response.model_dump()
-            logger.debug(f"{round_prefix} 模型返回 <<< {json.dumps(result, ensure_ascii=False)}")
+            logger.info(f"{round_prefix} 模型返回(非流式) <<< {json.dumps(result, ensure_ascii=False)}")
             return result
         except APIStatusError as e:
             logger.error(f"LLM非流式调用失败 [{provider['name']}]: {e.status_code}")
@@ -108,6 +109,7 @@ class LLMClient:
         supports_tools: bool = True,
         deep_thinking: bool = False,
         round_num: int = 1,
+        agent_name: str = "聊天Agent",
     ) -> AsyncGenerator[dict, None]:
         """流式调用LLM，yield SDK 解析后的 chunk dict"""
         provider = self._resolve_provider(model)
@@ -129,8 +131,8 @@ class LLMClient:
         if extra_body:
             kwargs["extra_body"] = extra_body
 
-        round_prefix = f"【第{round_num}轮】" if round_num == 1 else f"[第{round_num}轮]"
-        logger.debug(f"{round_prefix} 模型调用 >>> kwargs={json.dumps(kwargs, ensure_ascii=False)}")
+        round_prefix = f"[{agent_name}][第{round_num}轮]"
+        logger.info(f"{round_prefix} 模型调用(流式) >>> {json.dumps(kwargs, ensure_ascii=False)}")
 
         try:
             stream = await client.chat.completions.create(**kwargs)
