@@ -27,9 +27,6 @@
           </el-avatar>
         </div>
         <div class="message-body">
-          <div class="message-meta">
-            <span class="message-role">{{ msg.role === 'user' ? '我' : '助手' }}</span>
-          </div>
           <!-- 按 segments 顺序渲染 -->
           <template v-for="(segment, sIdx) in msg.segments" :key="sIdx">
             <!-- Reasoning segment: 深度思考折叠框，工具符号内联 -->
@@ -104,6 +101,45 @@
           <!-- 流式光标：当只有 reasoning 还没有 text 时 -->
           <div v-if="msg.isStreaming && !msg.segments.some(s => s.type === 'text')" class="message-content">
             <span class="streaming-cursor"></span>
+          </div>
+          <div v-if="messageText(msg)" class="message-actions">
+            <button
+              class="message-action-btn copy-message-btn"
+              type="button"
+              :title="copiedMessageId === msg.id ? '已复制' : '复制内容'"
+              @click="copyMessage(msg)"
+            >
+              <span v-if="copiedMessageId === msg.id" class="copy-success">🗸</span>
+              <el-icon v-else><CopyDocument /></el-icon>
+            </button>
+            <template v-if="msg.role === 'assistant'">
+              <button
+                class="message-action-btn"
+                :class="{ active: messageFeedback[msg.id] === 'like' }"
+                type="button"
+                title="喜欢"
+                :aria-pressed="messageFeedback[msg.id] === 'like'"
+                @click="setMessageFeedback(msg.id, 'like')"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path class="thumb-cuff" d="M7 10v12H3V10h4Z" />
+                  <path class="thumb-body" d="M7 10 11.4 2a2.3 2.3 0 0 1 4.4 1.8L15 7h4.7a2 2 0 0 1 2 2.3l-1.5 9a2 2 0 0 1-2 1.7H7Z" />
+                </svg>
+              </button>
+              <button
+                class="message-action-btn"
+                :class="{ active: messageFeedback[msg.id] === 'dislike' }"
+                type="button"
+                title="不喜欢"
+                :aria-pressed="messageFeedback[msg.id] === 'dislike'"
+                @click="setMessageFeedback(msg.id, 'dislike')"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path class="thumb-cuff" d="M7 14V2H3v12h4Z" />
+                  <path class="thumb-body" d="M7 14 11.4 22a2.3 2.3 0 0 0 4.4-1.8L15 17h4.7a2 2 0 0 0 2-2.3l-1.5-9a2 2 0 0 0-2-1.7H7Z" />
+                </svg>
+              </button>
+            </template>
           </div>
         </div>
       </div>
@@ -194,7 +230,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
-import { Promotion, ChatDotRound } from '@element-plus/icons-vue'
+import { Promotion, ChatDotRound, CopyDocument } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 import MarkdownIt from 'markdown-it'
 import tm from 'markdown-it-texmath'
@@ -226,6 +262,9 @@ const messageListRef = ref(null)
 const inputRef = ref(null)
 const isUserAtBottom = ref(true)
 const todoExpanded = ref(['todo'])
+const copiedMessageId = ref(null)
+const messageFeedback = ref({})
+let copyResetTimer = null
 
 const MAX_INPUT_HEIGHT = 300 // px，约12行
 
@@ -394,6 +433,40 @@ async function onToolSymbolClick(msg, part) {
   await chatStore.loadToolCallDetail(messageId, callId)
 }
 
+function messageText(msg) {
+  return (msg.blocks || [])
+    .filter(block => block.type === 'text' && block.content)
+    .map(block => block.content)
+    .join('\n')
+    .trim()
+}
+
+function setMessageFeedback(messageId, feedback) {
+  messageFeedback.value[messageId] = messageFeedback.value[messageId] === feedback ? null : feedback
+}
+
+async function copyMessage(msg) {
+  const text = messageText(msg)
+  if (!text) return
+  copiedMessageId.value = msg.id
+  clearTimeout(copyResetTimer)
+  copyResetTimer = setTimeout(() => {
+    copiedMessageId.value = null
+  }, 1500)
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    textarea.remove()
+  }
+}
+
 function avatarStyle(role) {
   return role === 'user'
     ? { background: '#67c23a' }
@@ -546,6 +619,66 @@ function handleSend() {
 
 .message-item.user .message-body {
   text-align: right;
+}
+
+.message-actions {
+  display: flex;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.message-item.user .message-actions {
+  justify-content: flex-end;
+}
+
+.message-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #79bbff;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.message-action-btn:hover {
+  color: #66b1ff;
+  background: transparent;
+}
+
+.copy-message-btn {
+  color: #409eff;
+}
+
+.copy-message-btn:hover {
+  color: #337ecc;
+}
+
+.message-action-btn.active {
+  color: #409eff;
+  background: transparent;
+}
+
+.message-action-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.message-action-btn.active .thumb-body {
+  fill: currentColor;
+}
+
+.message-action-btn.active .thumb-cuff {
+  fill: #fff;
+}
+
+.copy-success {
+  font-weight: 600;
+  line-height: 1;
 }
 
 .message-meta {
