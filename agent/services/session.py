@@ -459,6 +459,35 @@ class SessionManager:
         ).fetchone()
         return row["id"] if row else None
 
+    def set_text_content_metadata(self, message_id: str, metadata: dict) -> bool:
+        """往指定消息的 text 类型 message_content 行写入 metadata
+
+        用于存储查询理解阶段的附加信息（如已识别的高校列表），
+        供后续组装查询理解 Agent 的历史消息时读取。
+        """
+        db = get_db()
+        metadata_json = json.dumps(metadata, ensure_ascii=False)
+        cursor = db.execute(
+            "UPDATE message_contents SET metadata = ? WHERE message_id = ? AND type = 'text'",
+            (metadata_json, message_id),
+        )
+        db.commit()
+        return cursor.rowcount > 0
+
+    def get_text_content_metadata(self, message_id: str) -> Optional[dict]:
+        """读取指定消息 text 类型 message_content 行的 metadata"""
+        db = get_db()
+        row = db.execute(
+            "SELECT metadata FROM message_contents WHERE message_id = ? AND type = 'text' ORDER BY sort_order LIMIT 1",
+            (message_id,),
+        ).fetchone()
+        if not row or not row["metadata"]:
+            return None
+        try:
+            return json.loads(row["metadata"])
+        except (json.JSONDecodeError, TypeError):
+            return None
+
     def get_tool_calls_by_message(self, message_id: str) -> list[ToolCallDetail]:
         """获取指定消息下所有工具调用详情（懒加载接口使用）
 

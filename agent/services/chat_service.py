@@ -34,13 +34,13 @@ class ChatService:
 
     async def prepare_session(
         self, session_id: Optional[str], prompt: str, model: str
-    ) -> tuple[str, list[dict], str]:
-        """准备会话：创建或获取会话，保存用户消息，执行前置步骤，构建LLM上下文
+    ) -> tuple[str, str]:
+        """准备会话：创建或获取会话，保存用户消息
 
-        前置步骤：高校识别 + Fact 召回，结果作为 tool_call 写入 DB，
-        聊天 Agent 从对话历史中自然读到。
+        前置步骤（高校识别 + Fact 召回）已移至 stream_chat 中执行，
+        以便通过 SSE 实时推送 tool_call 事件给前端。
 
-        返回: (session_id, llm_messages, user_msg_id)
+        返回: (session_id, user_msg_id)
         """
         session_manager = get_session_manager()
 
@@ -59,29 +59,21 @@ class ChatService:
             parent_id=parent_id,
         )
 
-        # ---- 前置步骤：高校识别 + Fact 召回 ----
-        await self._run_pre_retrieval(session_id, prompt, user_msg.id)
+        return session_id, user_msg.id
 
-        tool_manager = get_tool_manager()
-        tool_schemas = await tool_manager.get_tool_schemas_for_llm()
-
-        context_engine = get_context_engine()
-        llm_messages = context_engine.build_messages(
-            session_id=session_id, model=model, tool_schemas=tool_schemas,
-        )
-
-        return session_id, llm_messages, user_msg.id
-
-    async def _run_pre_retrieval(self, session_id: str, user_query: str, user_msg_id: str):
-        """前置步骤：高校识别 + 迭代式 Fact 召回，每轮结果写入 DB tool_calls
+    async def _run_pre_retrieval(
+        self, session_id: str, user_query: str, user_msg_id: str,
+        model: str = "",
+    ) -> AsyncGenerator[dict, None]:
+        """前置步骤：查询理解 + 迭代式 Fact 召回，每步结果写入 DB 并 yield 事件
 
         流程：
-        1. 从 DB 加载对话历史
-        2. 查询理解：模糊匹配 + 语义匹配 + LLM → confirmed 高校列表（含 requirements）
-        3. 迭代式召回（最多3轮）：
+        1. 查询理解：模糊匹配 + 语义匹配 + LLM → confirmed/suspicious 高校列表
+           - 结果伪装成 query_understanding tool_call 入库 + yield 事件
+        2. 迭代式召回（最多3轮）：
            - 每轮：召回 Agent 生成 queries → 双路召回 → 判断 sufficient
            - sufficient=true 则停止
-           - 每轮召回结果作为一条 university_recall tool_call 写入 DB
+           - 每轮召回结果伪装成 university_recall tool_call 入库 + yield 事件
         """
         session_manager = get_session_manager()
 
@@ -90,27 +82,58 @@ class ChatService:
 
         # 2. 查询理解
         qu_service = get_query_understanding_service()
-        qu_result = await qu_service.understand(user_query, history)
+        qu_result = await qu_service.understand(user_query, history, model=model)
 
         confirmed = qu_result.get("confirmed", [])
+
+        # 将该轮已识别高校列表写入 user 消息 metadata，
+        # 供下一轮查询理解 Agent 组装 <target_universities> 标签
+        target_universities = [uni["name"] for uni in confirmed]
+        session_manager.set_text_content_metadata(
+            message_id=user_msg_id,
+            metadata={"target_universities": target_universities},
+        )
+
+        # 2.1 伪装 query_understanding tool_call 入库 + yield 事件
+        qu_call_id = f"call_{uuid.uuid4().hex[:8]}"
+        qu_parameters = json.dumps({"query": user_query}, ensure_ascii=False)
+        qu_tool_calls = [{
+            "id": qu_call_id,
+            "type": "function",
+            "function": {"name": "query_understanding", "arguments": qu_parameters},
+        }]
+        qu_result_str = json.dumps(qu_result.get("llm_output", {}), ensure_ascii=False)
+
+        qu_assistant_msg_id = session_manager.add_assistant_message_with_tool_calls(
+            session_id=session_id,
+            content="",
+            tool_calls=qu_tool_calls,
+            parent_id=user_msg_id,
+        )
+        session_manager.update_tool_call(
+            call_id=qu_call_id,
+            message_id=qu_assistant_msg_id,
+            result=qu_result_str,
+            status="success",
+        )
+        yield {"type": "tool_calls", "tool_calls": qu_tool_calls}
+        yield {"type": "tool_results", "tool_results": [{
+            "id": qu_call_id,
+            "result": qu_result_str,
+            "status": "success",
+        }]}
+
         if not confirmed:
-            logger.info("[前置步骤] 无confirmed高校，跳过")
+            logger.info("[前置步骤] 无confirmed高校，跳过召回")
             return
 
-        # 3. 迭代式召回
+        # 3. 迭代式召回（每轮即时入库 + yield 事件）
         recall_agent = get_recall_agent_service()
-        rounds = await recall_agent.iterative_recall(user_query, confirmed, history)
-
-        if not rounds:
-            logger.info("[前置步骤] 召回无结果，跳过")
-            return
-
-        # 4. 每轮召回结果写一条 university_recall tool_call
         tool_name = "university_recall"
-        current_parent_id = user_msg_id
+        current_parent_id = qu_assistant_msg_id
 
         round_summaries = []
-        for rd in rounds:
+        async for rd in recall_agent.iterative_recall(user_query, confirmed, history, model=model):
             round_num = rd["round"]
             queries_by_uni = rd.get("queries_by_uni", {})
             recall_result = rd.get("recall_result", {})
@@ -131,15 +154,16 @@ class ChatService:
             )
             from agent.services.retrieval import RetrievalService
             tool_result = RetrievalService.format_recall_xml(recall_result)
+            recall_tool_calls = [{
+                "id": call_id,
+                "type": "function",
+                "function": {"name": tool_name, "arguments": tool_parameters},
+            }]
 
             assistant_msg_id = session_manager.add_assistant_message_with_tool_calls(
                 session_id=session_id,
                 content="",
-                tool_calls=[{
-                    "id": call_id,
-                    "type": "function",
-                    "function": {"name": tool_name, "arguments": tool_parameters},
-                }],
+                tool_calls=recall_tool_calls,
                 parent_id=current_parent_id,
             )
 
@@ -149,6 +173,13 @@ class ChatService:
                 result=tool_result,
                 status="success",
             )
+
+            yield {"type": "tool_calls", "tool_calls": recall_tool_calls}
+            yield {"type": "tool_results", "tool_results": [{
+                "id": call_id,
+                "result": tool_result,
+                "status": "success",
+            }]}
 
             # 链式关联：下一轮的 parent 指向当前轮的 assistant 消息
             current_parent_id = assistant_msg_id
@@ -162,29 +193,46 @@ class ChatService:
                 f"第{round_num}轮 {len(uni_names)}所高校 {facts_count}条fact ({', '.join(uni_names)})"
             )
 
-        logger.info(f"[前置步骤] 召回完成 {' | '.join(round_summaries)}")
+        if round_summaries:
+            logger.info(f"[前置步骤] 召回完成 {' | '.join(round_summaries)}")
 
     async def stream_chat(
         self,
-        messages: list[dict],
+        session_id: str,
+        user_query: str,
+        user_msg_id: str,
         model: str,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
-        session_id: str = "",
-        parent_id: Optional[str] = None,
         deep_thinking: bool = False,
     ) -> AsyncGenerator[dict, None]:
-        """流式对话（迭代式工具调用循环）
+        """流式对话（前置步骤 + 迭代式工具调用循环）
 
-        本地模型（Arch-Agent-3B）使用 stream=false + tools 非流式路径，
-        其他模型使用 stream=true 流式路径。
-        工具调用循环使用迭代而非递归，最多配置的 max_tool_rounds 轮。
+        1. 执行前置步骤（查询理解 + Fact 召回），每步入库并 yield tool 事件
+        2. 从 DB 构建 llm_messages（此时前置步骤的 tool_call 已在历史中）
+        3. 工具调用循环：stream=true 流式 / stream=false 非流式，最多 max_tool_rounds 轮
         """
         config = get_config()
         provider = config.resolve_model_provider(model)
         supports_tools = provider.get("supports_tools", True)
         max_tool_rounds = config.max_tool_rounds
 
+        # 1. 前置步骤：查询理解 + Fact 召回，yield tool 事件
+        async for event in self._run_pre_retrieval(session_id, user_query, user_msg_id, model=model):
+            yield event
+
+        # 2. 构建 llm_messages（前置步骤的 tool_call 已写入 DB，build_messages 会读到）
+        tool_manager = get_tool_manager()
+        tool_schemas = await tool_manager.get_tool_schemas_for_llm()
+        context_engine = get_context_engine()
+        messages = context_engine.build_messages(
+            session_id=session_id, model=model, tool_schemas=tool_schemas,
+        )
+
+        # parent_id 指向最后一条消息（前置步骤最后写入的 assistant 消息或 user 消息）
+        parent_id = get_session_manager().get_last_message_id(session_id)
+
+        # 3. 工具调用循环
         current_messages = messages
         current_parent_id = parent_id
         format_retry_count = 0

@@ -30,9 +30,7 @@
     </main>
     <aside
       class="university-panel"
-      :class="{ hidden: universityPanelCollapsed && !universityPanelPreview, preview: universityPanelPreview }"
-      @mouseenter="handleUniversityPanelEnter"
-      @mouseleave="handleUniversityPanelLeave"
+      :class="{ hidden: universityPanelCollapsed }"
     >
       <div
         class="panel-resize-handle right-resize-handle"
@@ -56,6 +54,8 @@
           :indent="14"
           node-key="id"
           highlight-current
+          :current-node-key="currentUniversityNodeId"
+          @node-click="onUniversityNodeClick"
         >
           <template #default="{ data }">
             <span class="university-tree-label">
@@ -89,8 +89,6 @@
       title="展开/收起高校节点"
       aria-label="展开或收起高校节点"
       @pointerdown.prevent="toggleUniversityPanel"
-      @mouseenter="handleUniversityEdgeEnter"
-      @mouseleave="handleUniversityEdgeLeave"
     >
       <span class="edge-pill">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -102,7 +100,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import SessionList from './components/SessionList.vue'
 import ChatArea from './components/ChatArea.vue'
 import { useChatStore } from './stores/chat'
@@ -115,11 +113,6 @@ const sidebarHovered = ref(false)
 let hideTimer = null
 let previewBlockedUntil = 0
 const universityPanelCollapsed = ref(false)
-const universityPanelPreview = ref(false)
-const universityEdgeHovered = ref(false)
-const universityPanelHovered = ref(false)
-let universityHideTimer = null
-let universityPreviewBlockedUntil = 0
 const DEFAULT_PANEL_WIDTH = 260
 const MIN_PANEL_WIDTH = 180
 const MAX_PANEL_WIDTH = 560
@@ -345,10 +338,38 @@ function cloneTopicsWithIds(topics, prefix) {
   })
 }
 
-const universityTree = [
-  { id: 'hunan', label: '湖南工业大学', isUniversity: true, children: cloneTopicsWithIds(universityTopics, 'hunan') },
-  { id: 'tsinghua', label: '清华大学', isUniversity: true, children: cloneTopicsWithIds(universityTopics, 'tsinghua') }
-]
+const universityTree = computed(() =>
+  chatStore.confirmedUniversities.map((uni, index) => ({
+    id: `uni-${index}`,
+    label: uni.name,
+    isUniversity: true,
+    children: cloneTopicsWithIds(universityTopics, `uni-${index}`),
+  }))
+)
+
+const currentUniversityNodeId = ref(null)
+
+function onUniversityNodeClick(nodeData) {
+  if (nodeData.isUniversity) {
+    chatStore.selectedUniversity = nodeData.label
+  }
+}
+
+watch(() => chatStore.selectedUniversity, (name) => {
+  if (!name) return
+  const idx = chatStore.confirmedUniversities.findIndex(u => u.name === name)
+  if (idx === -1) return
+  universityPanelCollapsed.value = false
+  currentUniversityNodeId.value = `uni-${idx}`
+  nextTick(() => {
+    universityTreeRef.value?.setCurrentKey(`uni-${idx}`)
+  })
+})
+
+watch(() => chatStore.currentSessionId, () => {
+  currentUniversityNodeId.value = null
+  universityTreeRef.value?.setCurrentKey(null)
+})
 
 function clearHideTimer() {
   if (hideTimer !== null) {
@@ -395,49 +416,8 @@ function toggleSidebar() {
   if (sidebarCollapsed.value) previewBlockedUntil = Date.now() + 500
 }
 
-function clearUniversityHideTimer() {
-  if (universityHideTimer !== null) {
-    clearTimeout(universityHideTimer)
-    universityHideTimer = null
-  }
-}
-
-function scheduleUniversityPreviewHide() {
-  clearUniversityHideTimer()
-  universityHideTimer = setTimeout(() => {
-    if (universityPanelCollapsed.value && !universityEdgeHovered.value && !universityPanelHovered.value) {
-      universityPanelPreview.value = false
-    }
-  }, 160)
-}
-
-function handleUniversityEdgeEnter() {
-  universityEdgeHovered.value = true
-  clearUniversityHideTimer()
-  if (universityPanelCollapsed.value && Date.now() >= universityPreviewBlockedUntil) {
-    universityPanelPreview.value = true
-  }
-}
-
-function handleUniversityEdgeLeave() {
-  universityEdgeHovered.value = false
-  scheduleUniversityPreviewHide()
-}
-
-function handleUniversityPanelEnter() {
-  universityPanelHovered.value = true
-  clearUniversityHideTimer()
-}
-
-function handleUniversityPanelLeave() {
-  universityPanelHovered.value = false
-  scheduleUniversityPreviewHide()
-}
-
 function toggleUniversityPanel() {
   universityPanelCollapsed.value = !universityPanelCollapsed.value
-  universityPanelPreview.value = false
-  if (universityPanelCollapsed.value) universityPreviewBlockedUntil = Date.now() + 500
 }
 
 function setAllUniversityNodesExpanded(expanded) {
@@ -490,7 +470,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearHideTimer()
-  clearUniversityHideTimer()
   window.removeEventListener('pointermove', handleResize)
   window.removeEventListener('pointerup', stopResize)
 })
@@ -592,10 +571,6 @@ onBeforeUnmount(() => {
 
 .university-panel.hidden {
   transform: translateX(var(--university-panel-width));
-}
-
-.university-panel.preview {
-  box-shadow: -4px 0 18px rgba(0, 0, 0, 0.1);
 }
 
 .university-panel-header {

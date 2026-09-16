@@ -50,15 +50,48 @@
                           <span class="tool-symbol" :title="part.toolCall.function?.name || part.toolCall.id">🔧</span>
                         </template>
                         <div class="tool-popover-content">
-                          <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
-                          <div v-if="part.toolCall.result" class="tool-popover-row">
-                            <span class="tp-label">结果:</span>
-                            <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.result)"></div>
-                          </div>
-                          <div class="tool-popover-row">
-                            <span class="tp-label">参数:</span>
-                            <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.function?.arguments)"></div>
-                          </div>
+                          <template v-if="part.toolCall.function?.name === 'query_understanding' && part.toolCall.result">
+                            <div class="uni-result-card">
+                              <div class="uni-result-title">🏫 高校识别</div>
+                              <div v-if="parseUniversityResult(part.toolCall.result)?.confirmed?.length" class="uni-section">
+                                <div class="uni-section-label confirmed">已确认</div>
+                                <div
+                                  v-for="uni in parseUniversityResult(part.toolCall.result).confirmed"
+                                  :key="uni.name"
+                                  class="uni-item confirmed"
+                                  @click="selectUniversity(uni.name)"
+                                >
+                                  <span class="uni-name">{{ uni.name }}</span>
+                                  <span v-if="uni.requirements?.length" class="uni-requirements">{{ uni.requirements.join('、') }}</span>
+                                </div>
+                              </div>
+                              <div v-if="parseUniversityResult(part.toolCall.result)?.suspicious?.length" class="uni-section">
+                                <div class="uni-section-label suspicious">可疑</div>
+                                <div
+                                  v-for="uni in parseUniversityResult(part.toolCall.result).suspicious"
+                                  :key="uni.name"
+                                  class="uni-item suspicious"
+                                >
+                                  <span class="uni-name">{{ uni.name }}</span>
+                                  <span v-if="uni.requirements?.length" class="uni-requirements">{{ uni.requirements.join('、') }}</span>
+                                </div>
+                              </div>
+                              <div v-if="!parseUniversityResult(part.toolCall.result)?.confirmed?.length && !parseUniversityResult(part.toolCall.result)?.suspicious?.length" class="uni-empty">
+                                未识别到高校
+                              </div>
+                            </div>
+                          </template>
+                          <template v-else>
+                            <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
+                            <div v-if="part.toolCall.result" class="tool-popover-row">
+                              <span class="tp-label">结果:</span>
+                              <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.result)"></div>
+                            </div>
+                            <div class="tool-popover-row">
+                              <span class="tp-label">参数:</span>
+                              <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.function?.arguments)"></div>
+                            </div>
+                          </template>
                         </div>
                       </el-popover>
                     </template>
@@ -82,15 +115,48 @@
                       <span class="tool-symbol" :title="part.toolCall.function?.name || part.toolCall.id">🔧</span>
                     </template>
                     <div class="tool-popover-content">
-                      <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
-                      <div v-if="part.toolCall.result" class="tool-popover-row">
-                        <span class="tp-label">结果:</span>
-                        <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.result)"></div>
-                      </div>
-                      <div class="tool-popover-row">
-                        <span class="tp-label">参数:</span>
-                        <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.function?.arguments)"></div>
-                      </div>
+                      <template v-if="part.toolCall.function?.name === 'query_understanding' && part.toolCall.result">
+                        <div class="uni-result-card">
+                          <div class="uni-result-title">🏫 高校识别</div>
+                          <div v-if="parseUniversityResult(part.toolCall.result)?.confirmed?.length" class="uni-section">
+                            <div class="uni-section-label confirmed">已确认</div>
+                            <div
+                              v-for="uni in parseUniversityResult(part.toolCall.result).confirmed"
+                              :key="uni.name"
+                              class="uni-item confirmed"
+                              @click="selectUniversity(uni.name)"
+                            >
+                              <span class="uni-name">{{ uni.name }}</span>
+                              <span v-if="uni.requirements?.length" class="uni-requirements">{{ uni.requirements.join('、') }}</span>
+                            </div>
+                          </div>
+                          <div v-if="parseUniversityResult(part.toolCall.result)?.suspicious?.length" class="uni-section">
+                            <div class="uni-section-label suspicious">可疑</div>
+                            <div
+                              v-for="uni in parseUniversityResult(part.toolCall.result).suspicious"
+                              :key="uni.name"
+                              class="uni-item suspicious"
+                            >
+                              <span class="uni-name">{{ uni.name }}</span>
+                              <span v-if="uni.requirements?.length" class="uni-requirements">{{ uni.requirements.join('、') }}</span>
+                            </div>
+                          </div>
+                          <div v-if="!parseUniversityResult(part.toolCall.result)?.confirmed?.length && !parseUniversityResult(part.toolCall.result)?.suspicious?.length" class="uni-empty">
+                            未识别到高校
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
+                        <div v-if="part.toolCall.result" class="tool-popover-row">
+                          <span class="tp-label">结果:</span>
+                          <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.result)"></div>
+                        </div>
+                        <div class="tool-popover-row">
+                          <span class="tp-label">参数:</span>
+                          <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.function?.arguments)"></div>
+                        </div>
+                      </template>
                     </div>
                   </el-popover>
                 </template>
@@ -389,6 +455,20 @@ function renderToolContent(text) {
 
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function parseUniversityResult(resultStr) {
+  if (!resultStr) return null
+  try {
+    const parsed = JSON.parse(resultStr)
+    return parsed?.universities || null
+  } catch {
+    return null
+  }
+}
+
+function selectUniversity(name) {
+  chatStore.selectedUniversity = name
 }
 
 function renderMarkdown(text) {
@@ -783,6 +863,87 @@ function handleSend() {
   font-weight: 600;
   margin-right: 4px;
   color: #909399;
+}
+
+/* 高校识别卡片 */
+.uni-result-card {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.uni-result-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #303133;
+}
+
+.uni-section {
+  margin-bottom: 8px;
+}
+
+.uni-section-label {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.uni-section-label.confirmed {
+  background: #e1f3d8;
+  color: #67c23a;
+}
+
+.uni-section-label.suspicious {
+  background: #faecd8;
+  color: #e6a23c;
+}
+
+.uni-item {
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-bottom: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.uni-item.confirmed {
+  background: #f0f9eb;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.uni-item.confirmed:hover {
+  background: #e1f3d8;
+}
+
+.uni-item.suspicious {
+  background: #fdf6ec;
+}
+
+.uni-item .uni-name {
+  font-weight: 600;
+  color: #303133;
+  font-size: 13px;
+}
+
+.uni-item.suspicious .uni-name {
+  color: #e6a23c;
+}
+
+.uni-item .uni-requirements {
+  font-size: 12px;
+  color: #909399;
+}
+
+.uni-empty {
+  color: #c0c4cc;
+  font-size: 13px;
+  text-align: center;
+  padding: 8px;
 }
 
 .streaming-cursor {

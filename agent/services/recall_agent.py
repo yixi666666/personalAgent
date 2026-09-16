@@ -52,10 +52,11 @@ class RecallAgentService:
     # LLM 调用
     # ------------------------------------------------------------------
 
-    async def _call_llm(self, messages: list[dict], round_num: int = 1) -> dict:
+    async def _call_llm(self, messages: list[dict], round_num: int = 1, model: str = "") -> dict:
         """调用召回 Agent LLM，返回解析后的 JSON"""
         config = get_config()
-        model = config.default_model
+        if not model:
+            model = config.default_model
         provider = config.resolve_model_provider(model)
 
         llm_client = get_llm_client()
@@ -232,8 +233,12 @@ class RecallAgentService:
         user_query: str,
         confirmed: list[dict],
         history: list[dict],
-    ) -> list[dict]:
-        """迭代式召回主入口
+        model: str = "",
+    ):
+        """迭代式召回主入口（async generator）
+
+        每轮召回完成后立即 yield 结果，调用方可逐轮入库+推送，
+        无需等待所有轮次结束。
 
         输入:
             user_query: 用户原始问题
@@ -241,8 +246,7 @@ class RecallAgentService:
                 [{"name", "requirements", "university_id"}, ...]
             history: 对话历史（get_messages 格式）
 
-        输出:
-            rounds: 每轮的召回结果列表，每个元素:
+        yield 每轮结果:
             {
               "round": 1,
               "queries_by_uni": {"湖南工业大学": ["query1", ...], ...},
@@ -257,8 +261,6 @@ class RecallAgentService:
         prev_rounds_queries: list[dict[str, list[str]]] = []
         prev_rounds_results: list[dict] = []
 
-        rounds: list[dict] = []
-
         for round_num in range(1, MAX_ROUNDS + 1):
             # 1. 组装 LLM 消息并调用
             llm_messages = self._build_llm_messages(
@@ -266,20 +268,20 @@ class RecallAgentService:
                 prev_rounds_queries, prev_rounds_results,
             )
 
-            llm_result = await self._call_llm(llm_messages, round_num=round_num)
+            llm_result = await self._call_llm(llm_messages, round_num=round_num, model=model)
             sufficient = llm_result.get("sufficient", False)
             uni_outputs = llm_result.get("universities", [])
 
             # 2. 如果 sufficient=true，停止召回
             if sufficient:
                 logger.info(f"[fact双路召回] 第{round_num}轮 sufficient=true，停止")
-                rounds.append({
+                yield {
                     "round": round_num,
                     "sufficient": True,
                     "queries_by_uni": {},
                     "recall_result": {"universities": [], "target_universities": []},
-                })
-                break
+                }
+                return
 
             # 3. 提取每所高校的 queries
             queries_by_uni: dict[str, list[str]] = {}
@@ -291,13 +293,13 @@ class RecallAgentService:
 
             if not queries_by_uni:
                 logger.info(f"[fact双路召回] 第{round_num}轮 无有效queries，停止")
-                rounds.append({
+                yield {
                     "round": round_num,
                     "sufficient": False,
                     "queries_by_uni": {},
                     "recall_result": {"universities": [], "target_universities": []},
-                })
-                break
+                }
+                return
 
             # 4. 组装 retrieval_service.recall() 的输入
             recall_input = []
@@ -333,18 +335,16 @@ class RecallAgentService:
                 f"共{total_facts}条 | {' | '.join(uni_parts)}"
             )
 
-            rounds.append({
+            yield {
                 "round": round_num,
                 "sufficient": False,
                 "queries_by_uni": queries_by_uni,
                 "recall_result": recall_result,
-            })
+            }
 
             # 8. 如果是最后一轮，强制停止
             if round_num == MAX_ROUNDS:
                 logger.info(f"[fact双路召回] 达到最大轮次({MAX_ROUNDS})，强制停止")
-
-        return rounds
 
 
 _recall_agent_service: Optional[RecallAgentService] = None

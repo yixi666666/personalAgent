@@ -195,8 +195,13 @@ class QueryUnderstandingService:
     def _filter_history_messages(history: list[dict]) -> list[dict]:
         """从对话历史中提取纯文本对话，过滤掉 tool 消息、tool_calls、reasoning_content
 
-        只保留 user 和 assistant 的纯文本 content，用于查询理解 Agent 的上下文。
+        - user 消息：包裹 <question> 标签，如有 target_universities metadata 则追加 <target_universities> 标签
+        - assistant 消息：保留纯文本 content
+        - 跳过 tool 消息和带 tool_calls 的 assistant 消息（前置召回的伪工具调用）
         """
+        from agent.services.session import get_session_manager
+
+        session_manager = get_session_manager()
         filtered = []
         for msg in history:
             role = msg.get("role")
@@ -208,20 +213,36 @@ class QueryUnderstandingService:
             # 跳过带 tool_calls 的 assistant 消息（前置召回的伪工具调用）
             if msg.get("tool_calls"):
                 continue
-            filtered.append({"role": role, "content": content})
+
+            if role == "user":
+                # 包裹 <question> 标签
+                parts = [f"<question>\n{content}\n</question>"]
+                # 读取该轮查询理解的 target_universities
+                msg_id = msg.get("id")
+                if msg_id:
+                    metadata = session_manager.get_text_content_metadata(msg_id)
+                    if metadata and "target_universities" in metadata:
+                        target_list = metadata["target_universities"]
+                        if isinstance(target_list, list):
+                            target_json = json.dumps(target_list, ensure_ascii=False)
+                            parts.append(f"<target_universities>\n{target_json}\n</target_universities>")
+                filtered.append({"role": "user", "content": "\n".join(parts)})
+            else:
+                filtered.append({"role": role, "content": content})
         return filtered
 
     # ------------------------------------------------------------------
     # LLM 调用
     # ------------------------------------------------------------------
 
-    async def _call_llm(self, messages: list[dict]) -> dict:
+    async def _call_llm(self, messages: list[dict], model: str = "") -> dict:
         """调用查询理解 Agent LLM，返回解析后的 JSON
 
         每次调用的 HTTP 请求 body 完整日志打印
         """
         config = get_config()
-        model = config.default_model
+        if not model:
+            model = config.default_model
         provider = config.resolve_model_provider(model)
 
         llm_client = get_llm_client()
@@ -352,6 +373,7 @@ class QueryUnderstandingService:
         self,
         user_query: str,
         history: list[dict],
+        model: str = "",
     ) -> dict:
         """查询理解主入口
 
@@ -405,7 +427,7 @@ class QueryUnderstandingService:
         llm_messages.append({"role": "user", "content": latest_message})
 
         # 5. 调用 LLM
-        llm_result = await self._call_llm(llm_messages)
+        llm_result = await self._call_llm(llm_messages, model=model)
 
         # 6. 解析输出
         universities_data = llm_result.get("universities", {})
@@ -447,6 +469,7 @@ class QueryUnderstandingService:
             "confirmed": confirmed,
             "suspicious": suspicious,
             "candidates": candidates,
+            "llm_output": llm_result,
         }
 
         logger.debug(

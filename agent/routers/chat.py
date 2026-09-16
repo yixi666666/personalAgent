@@ -19,7 +19,7 @@ async def _stream_chat_generator(request: ChatRequest):
     model = request.model
 
     try:
-        session_id, llm_messages, user_msg_id = await chat_service.prepare_session(
+        session_id, user_msg_id = await chat_service.prepare_session(
             session_id=request.session_id,
             prompt=request.prompt,
             model=model,
@@ -31,12 +31,12 @@ async def _stream_chat_generator(request: ChatRequest):
     yield f"data: {json.dumps({'session_id': session_id}, ensure_ascii=False)}\n\n"
 
     async for event in chat_service.stream_chat(
-        messages=llm_messages,
+        session_id=session_id,
+        user_query=request.prompt,
+        user_msg_id=user_msg_id,
         model=model,
         max_tokens=request.max_tokens,
         temperature=request.temperature,
-        session_id=session_id,
-        parent_id=user_msg_id,
         deep_thinking=request.deep_thinking,
     ):
         event_type = event.get("type")

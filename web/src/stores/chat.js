@@ -14,9 +14,42 @@ export const useChatStore = defineStore('chat', () => {
   const streamingReasoning = ref('')
   const streaming = ref(false)
   const deepThinking = ref(false)
+  const selectedUniversity = ref(null)
 
   const currentSession = computed(() => {
     return sessions.value.find(s => s.id === currentSessionId.value) || null
+  })
+
+  function parseUniversityResult(resultStr) {
+    if (!resultStr) return null
+    try {
+      const parsed = JSON.parse(resultStr)
+      return parsed?.universities || null
+    } catch {
+      return null
+    }
+  }
+
+  const confirmedUniversities = computed(() => {
+    const result = []
+    const seen = new Set()
+    for (const msg of messages.value) {
+      const blocks = msg.blocks || []
+      for (const block of blocks) {
+        if (block.type !== 'tool_call') continue
+        const tc = block.toolCall
+        if (!tc || tc.function?.name !== 'query_understanding') continue
+        const uniData = parseUniversityResult(tc.result)
+        if (!uniData) continue
+        for (const uni of uniData.confirmed || []) {
+          if (uni.name && !seen.has(uni.name)) {
+            seen.add(uni.name)
+            result.push({ name: uni.name, requirements: uni.requirements || [] })
+          }
+        }
+      }
+    }
+    return result
   })
 
   // 只从最新一条 assistant 消息中提取最新的 todoData
@@ -382,6 +415,8 @@ export const useChatStore = defineStore('chat', () => {
     deepThinking,
     currentSession,
     currentTodos,
+    confirmedUniversities,
+    selectedUniversity,
     loadSessions: loadSessionsData,
     loadSession: loadSessionData,
     removeSession,
