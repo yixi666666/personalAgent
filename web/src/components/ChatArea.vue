@@ -6,7 +6,15 @@
           ? (chatStore.currentSession?.title || '会话 ' + chatStore.currentSessionId.slice(0, 8))
           : '新对话' }}
       </span>
-      <el-tag size="small" type="info">{{ chatStore.currentModel }}</el-tag>
+      <button
+        class="university-toggle-btn"
+        type="button"
+        title="展开/收起高校面板"
+        aria-label="展开或收起高校面板"
+        @click="emit('toggle-university')"
+      >
+        🏫
+      </button>
     </div>
 
     <div ref="messageListRef" class="message-list scrollable" @scroll="handleScroll">
@@ -20,6 +28,7 @@
         :key="msg.id"
         class="message-item"
         :class="msg.role"
+        :data-key="msg.id"
       >
         <div class="message-avatar">
           <el-avatar :size="32" :style="avatarStyle(msg.role)">
@@ -50,54 +59,36 @@
                           <span class="tool-symbol" :title="part.toolCall.function?.name || part.toolCall.id">🔧</span>
                         </template>
                         <div class="tool-popover-content">
-                          <template v-if="part.toolCall.function?.name === 'query_understanding' && part.toolCall.result">
-                            <div class="uni-result-card">
-                              <div class="uni-result-title">🏫 高校识别</div>
-                              <div v-if="parseUniversityResult(part.toolCall.result)?.confirmed?.length" class="uni-section">
-                                <div class="uni-section-label confirmed">已确认</div>
-                                <div
-                                  v-for="uni in parseUniversityResult(part.toolCall.result).confirmed"
-                                  :key="uni.name"
-                                  class="uni-item confirmed"
-                                  @click="selectUniversity(uni.name)"
-                                >
-                                  <span class="uni-name">{{ uni.name }}</span>
-                                  <span v-if="uni.requirements?.length" class="uni-requirements">{{ uni.requirements.join('、') }}</span>
-                                </div>
-                              </div>
-                              <div v-if="parseUniversityResult(part.toolCall.result)?.suspicious?.length" class="uni-section">
-                                <div class="uni-section-label suspicious">可疑</div>
-                                <div
-                                  v-for="uni in parseUniversityResult(part.toolCall.result).suspicious"
-                                  :key="uni.name"
-                                  class="uni-item suspicious"
-                                >
-                                  <span class="uni-name">{{ uni.name }}</span>
-                                  <span v-if="uni.requirements?.length" class="uni-requirements">{{ uni.requirements.join('、') }}</span>
-                                </div>
-                              </div>
-                              <div v-if="!parseUniversityResult(part.toolCall.result)?.confirmed?.length && !parseUniversityResult(part.toolCall.result)?.suspicious?.length" class="uni-empty">
-                                未识别到高校
-                              </div>
-                            </div>
-                          </template>
-                          <template v-else>
-                            <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
-                            <div v-if="part.toolCall.result" class="tool-popover-row">
-                              <span class="tp-label">结果:</span>
-                              <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.result)"></div>
-                            </div>
-                            <div class="tool-popover-row">
-                              <span class="tp-label">参数:</span>
-                              <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.function?.arguments)"></div>
-                            </div>
-                          </template>
+                          <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
+                          <div v-if="part.toolCall.result" class="tool-popover-row">
+                            <span class="tp-label">结果:</span>
+                            <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.result)"></div>
+                          </div>
+                          <div class="tool-popover-row">
+                            <span class="tp-label">参数:</span>
+                            <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.function?.arguments)"></div>
+                          </div>
                         </div>
                       </el-popover>
                     </template>
                   </div>
                 </el-collapse-item>
               </el-collapse>
+            </div>
+            <!-- Universities segment: 已识别高校名称，直接渲染在正文之前 -->
+            <div v-else-if="segment.type === 'universities'" class="message-universities">
+              <template v-for="uni in segment.universities" :key="uni.name">
+                <button
+                  v-if="!uni.suspicious"
+                  class="uni-chip"
+                  type="button"
+                  :title="'查看 ' + uni.name"
+                  @click="selectUniversity(uni.name)"
+                >
+                  {{ uni.name }}
+                </button>
+                <span v-else class="uni-chip suspicious" title="疑似高校">{{ uni.name }}</span>
+              </template>
             </div>
             <!-- Text segment: 正文气泡，工具符号内联 -->
             <div v-else-if="segment.type === 'text'" class="message-content" :class="{ error: msg.isError }">
@@ -115,48 +106,15 @@
                       <span class="tool-symbol" :title="part.toolCall.function?.name || part.toolCall.id">🔧</span>
                     </template>
                     <div class="tool-popover-content">
-                      <template v-if="part.toolCall.function?.name === 'query_understanding' && part.toolCall.result">
-                        <div class="uni-result-card">
-                          <div class="uni-result-title">🏫 高校识别</div>
-                          <div v-if="parseUniversityResult(part.toolCall.result)?.confirmed?.length" class="uni-section">
-                            <div class="uni-section-label confirmed">已确认</div>
-                            <div
-                              v-for="uni in parseUniversityResult(part.toolCall.result).confirmed"
-                              :key="uni.name"
-                              class="uni-item confirmed"
-                              @click="selectUniversity(uni.name)"
-                            >
-                              <span class="uni-name">{{ uni.name }}</span>
-                              <span v-if="uni.requirements?.length" class="uni-requirements">{{ uni.requirements.join('、') }}</span>
-                            </div>
-                          </div>
-                          <div v-if="parseUniversityResult(part.toolCall.result)?.suspicious?.length" class="uni-section">
-                            <div class="uni-section-label suspicious">可疑</div>
-                            <div
-                              v-for="uni in parseUniversityResult(part.toolCall.result).suspicious"
-                              :key="uni.name"
-                              class="uni-item suspicious"
-                            >
-                              <span class="uni-name">{{ uni.name }}</span>
-                              <span v-if="uni.requirements?.length" class="uni-requirements">{{ uni.requirements.join('、') }}</span>
-                            </div>
-                          </div>
-                          <div v-if="!parseUniversityResult(part.toolCall.result)?.confirmed?.length && !parseUniversityResult(part.toolCall.result)?.suspicious?.length" class="uni-empty">
-                            未识别到高校
-                          </div>
-                        </div>
-                      </template>
-                      <template v-else>
-                        <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
-                        <div v-if="part.toolCall.result" class="tool-popover-row">
-                          <span class="tp-label">结果:</span>
-                          <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.result)"></div>
-                        </div>
-                        <div class="tool-popover-row">
-                          <span class="tp-label">参数:</span>
-                          <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.function?.arguments)"></div>
-                        </div>
-                      </template>
+                      <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
+                      <div v-if="part.toolCall.result" class="tool-popover-row">
+                        <span class="tp-label">结果:</span>
+                        <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.result)"></div>
+                      </div>
+                      <div class="tool-popover-row">
+                        <span class="tp-label">参数:</span>
+                        <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.function?.arguments)"></div>
+                      </div>
                     </div>
                   </el-popover>
                 </template>
@@ -222,6 +180,29 @@
             <span class="dot"></span>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div
+      v-if="userMessages.length"
+      class="msg-dot-column"
+    >
+      <div
+        class="msg-dot-track"
+        :class="{ expanded: dotListVisible }"
+        @mouseenter="showDotList"
+        @mouseleave="hideDotList"
+      >
+        <button
+          v-for="(msg, idx) in userMessages"
+          :key="msg.id"
+          class="msg-dot"
+          type="button"
+          :aria-label="`跳转到第 ${idx + 1} 条用户消息`"
+          @click="scrollToMessage(msg.id)"
+        >
+          <span class="dot-list-text">{{ messageText(msg) }}</span>
+        </button>
       </div>
     </div>
 
@@ -295,7 +276,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { Promotion, ChatDotRound, CopyDocument } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 import MarkdownIt from 'markdown-it'
@@ -322,6 +303,7 @@ const md = new MarkdownIt({
 })
 md.use(tm, { engine: katex, delimiters: ['dollars', 'brackets', 'beg_end'] })
 
+const emit = defineEmits(['toggle-university'])
 const chatStore = useChatStore()
 const inputText = ref('')
 const messageListRef = ref(null)
@@ -330,7 +312,9 @@ const isUserAtBottom = ref(true)
 const todoExpanded = ref(['todo'])
 const copiedMessageId = ref(null)
 const messageFeedback = ref({})
+const dotListVisible = ref(false)
 let copyResetTimer = null
+let dotHideTimer = null
 
 const MAX_INPUT_HEIGHT = 300 // px，约12行
 
@@ -357,6 +341,7 @@ onMounted(() => {
 })
 
 const messages = computed(() => chatStore.messages)
+const userMessages = computed(() => messages.value.filter(msg => msg.role === 'user'))
 
 const isDeepThinkModel = computed(() => {
   const model = chatStore.models.find(m => m.id === chatStore.currentModel)
@@ -383,6 +368,9 @@ const processedMessages = computed(() => {
     let reasoningSegment = null
     let textSegment = null
     let lastType = null // 上一个非 tool_call 块的类型
+    // 已识别高校名称（query_understanding 直接渲染，不显示工具符号）
+    const universities = []
+    const seenUniversity = new Set()
 
     for (const block of msg.blocks) {
       if (block.type === 'reasoning') {
@@ -404,6 +392,23 @@ const processedMessages = computed(() => {
         }
         lastType = 'text'
       } else if (block.type === 'tool_call') {
+        // query_understanding：不显示工具符号，直接提取高校名称渲染
+        if (block.toolCall?.function?.name === 'query_understanding') {
+          const uniData = parseUniversityResult(block.toolCall.result)
+          for (const uni of uniData?.confirmed || []) {
+            if (uni.name && !seenUniversity.has(uni.name)) {
+              seenUniversity.add(uni.name)
+              universities.push({ name: uni.name, suspicious: false })
+            }
+          }
+          for (const uni of uniData?.suspicious || []) {
+            if (uni.name && !seenUniversity.has(uni.name)) {
+              seenUniversity.add(uni.name)
+              universities.push({ name: uni.name, suspicious: true })
+            }
+          }
+          continue
+        }
         // tool_call 内联到前一个块所属的 segment
         let target = lastType === 'reasoning' ? reasoningSegment
           : lastType === 'text' ? textSegment
@@ -417,6 +422,17 @@ const processedMessages = computed(() => {
           target = textSegment
         }
         target.parts.push({ type: 'tool_symbol', toolCall: block.toolCall, _messageId: block._messageId })
+      }
+    }
+
+    // 高校名称放在正文之前
+    if (universities.length > 0) {
+      const universitySegment = { type: 'universities', universities }
+      const textIndex = segments.findIndex(s => s.type === 'text')
+      if (textIndex === -1) {
+        segments.push(universitySegment)
+      } else {
+        segments.splice(textIndex, 0, universitySegment)
       }
     }
 
@@ -469,6 +485,7 @@ function parseUniversityResult(resultStr) {
 
 function selectUniversity(name) {
   chatStore.selectedUniversity = name
+  chatStore.universitySelectSeq++
 }
 
 function renderMarkdown(text) {
@@ -569,6 +586,22 @@ function scrollToBottom() {
   })
 }
 
+function showDotList() {
+  clearTimeout(dotHideTimer)
+  dotListVisible.value = true
+}
+
+function hideDotList() {
+  dotHideTimer = setTimeout(() => {
+    dotListVisible.value = false
+  }, 200)
+}
+
+function scrollToMessage(msgId) {
+  const message = messageListRef.value?.querySelector(`.message-item[data-key="${msgId}"]`)
+  message?.scrollIntoView({ behavior: 'instant', block: 'center' })
+}
+
 function handleScroll() {
   const el = messageListRef.value
   if (!el) return
@@ -624,6 +657,10 @@ function handleSend() {
   chatStore.sendMessage(text)
   autoResize()
 }
+
+onBeforeUnmount(() => {
+  clearTimeout(dotHideTimer)
+})
 </script>
 
 <style scoped>
@@ -632,6 +669,7 @@ function handleSend() {
   flex-direction: column;
   height: 100%;
   width: 100%;
+  position: relative;
   background: #fff;
   overflow: hidden !important;
 }
@@ -653,16 +691,126 @@ function handleSend() {
   color: #303133;
 }
 
-.chat-header .el-tag {
+.university-toggle-btn {
   position: absolute;
   right: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.university-toggle-btn:hover {
+  background: #ecf5ff;
 }
 
 .message-list {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden !important;
-  padding: 16px 20px;
+  padding: 16px 48px;
+}
+
+.msg-dot-column {
+  position: absolute;
+  right: 6px;
+  top: 56px;
+  bottom: 80px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+}
+
+/* 最多展示 8 个圆点的高度，更多则在轨道内滚动 */
+.msg-dot-track {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  justify-content: safe center;
+  width: 32px;
+  transform: translateY(-50%);
+  box-sizing: border-box;
+  max-height: 288px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  scrollbar-width: none;
+  transition: width 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.msg-dot-track.expanded {
+  width: 314px;
+  border-color: #e4e7ed;
+  background: #fff;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+}
+
+.msg-dot-track::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* 圆点始终固定在按钮右侧，不参与任何悬浮变化 */
+.msg-dot {
+  position: relative;
+  display: flex;
+  flex: 0 0 36px;
+  align-items: center;
+  width: 312px;
+  height: 36px;
+  padding: 0 22px 0 12px;
+  border: 0;
+  background: transparent;
+  color: #606266;
+  text-align: left;
+  cursor: pointer;
+}
+
+.msg-dot::after {
+  content: '';
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #dcdfe6;
+}
+
+.msg-dot:hover {
+  background: #f5f7fa;
+}
+
+.dot-list-text {
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: opacity 0.1s ease;
+}
+
+.msg-dot-track.expanded .dot-list-text {
+  opacity: 1;
 }
 
 .empty-state {
@@ -865,85 +1013,39 @@ function handleSend() {
   color: #909399;
 }
 
-/* 高校识别卡片 */
-.uni-result-card {
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.uni-result-title {
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: #303133;
-}
-
-.uni-section {
-  margin-bottom: 8px;
-}
-
-.uni-section-label {
-  display: inline-block;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 4px;
-  margin-bottom: 4px;
-}
-
-.uni-section-label.confirmed {
-  background: #e1f3d8;
-  color: #67c23a;
-}
-
-.uni-section-label.suspicious {
-  background: #faecd8;
-  color: #e6a23c;
-}
-
-.uni-item {
-  padding: 6px 8px;
-  border-radius: 6px;
-  margin-bottom: 3px;
+/* 已识别高校名称 */
+.message-universities {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
-.uni-item.confirmed {
+.uni-chip {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
   background: #f0f9eb;
+  color: #303133;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
   cursor: pointer;
   transition: background 0.15s;
 }
 
-.uni-item.confirmed:hover {
+.uni-chip:hover {
   background: #e1f3d8;
 }
 
-.uni-item.suspicious {
-  background: #fdf6ec;
-}
-
-.uni-item .uni-name {
-  font-weight: 600;
-  color: #303133;
-  font-size: 13px;
-}
-
-.uni-item.suspicious .uni-name {
+.uni-chip.suspicious {
+  border: 1px dashed #b3e19d;
   color: #e6a23c;
+  cursor: default;
 }
 
-.uni-item .uni-requirements {
-  font-size: 12px;
-  color: #909399;
-}
-
-.uni-empty {
-  color: #c0c4cc;
-  font-size: 13px;
-  text-align: center;
-  padding: 8px;
+.uni-chip.suspicious:hover {
+  background: #f0f9eb;
 }
 
 .streaming-cursor {

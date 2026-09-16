@@ -54,10 +54,9 @@ class RetrievalService:
         # 在 facts_vec 中做 KNN 搜索，然后关联 facts 表过滤 university_id
         rows = db.execute(
             "SELECT fact_id, distance FROM facts_vec "
-            "WHERE embedding MATCH ? "
-            "ORDER BY distance "
-            f"LIMIT {_VEC_LIMIT * 3}",  # 多取一些，过滤 university_id 后可能不够
-            (vec_json,),
+            "WHERE embedding MATCH ? AND k = ? "
+            "ORDER BY distance",
+            (vec_json, _VEC_LIMIT * 3),  # 多取一些，过滤 university_id 后可能不够
         ).fetchall()
 
         # 关联 facts 表过滤 university_id

@@ -116,7 +116,7 @@ class QueryUnderstandingService:
         # 在 universities_vec 中做 KNN 搜索
         rows = db.execute(
             "SELECT university_id, distance FROM universities_vec "
-            f"WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+            "WHERE embedding MATCH ? AND k = ? ORDER BY distance",
             (vec_json, _SEMANTIC_TOP_K),
         ).fetchall()
 

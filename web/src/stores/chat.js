@@ -15,6 +15,7 @@ export const useChatStore = defineStore('chat', () => {
   const streaming = ref(false)
   const deepThinking = ref(false)
   const selectedUniversity = ref(null)
+  const universitySelectSeq = ref(0)
 
   const currentSession = computed(() => {
     return sessions.value.find(s => s.id === currentSessionId.value) || null
@@ -95,15 +96,20 @@ export const useChatStore = defineStore('chat', () => {
         const callId = c.content
         const tc = toolCallsMap[callId]
         const toolName = (c.metadata && c.metadata.tool_name) || '未知'
+        // 方式A：后端内联了完整数据（todo_write / query_understanding），直接用
+        const inlined = c.metadata && c.metadata.result !== undefined ? c.metadata : null
         const block = {
           type: 'tool_call',
           _messageId: messageId,
           toolCall: tc || {
             id: callId,
             type: 'function',
-            function: { name: toolName, arguments: '{}' },
-            result: null,
-            status: 'unknown',
+            function: {
+              name: toolName,
+              arguments: inlined?.parameters ? JSON.stringify(inlined.parameters) : '{}',
+            },
+            result: inlined ? inlined.result : null,
+            status: (inlined && inlined.status) || 'unknown',
           },
         }
         // todo_write 的 tool_call 内联完整数据（方式A，不懒加载）
@@ -417,6 +423,7 @@ export const useChatStore = defineStore('chat', () => {
     currentTodos,
     confirmedUniversities,
     selectedUniversity,
+    universitySelectSeq,
     loadSessions: loadSessionsData,
     loadSession: loadSessionData,
     removeSession,

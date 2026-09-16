@@ -26,7 +26,7 @@
       class="app-main"
       :class="{ 'left-expanded': sidebarCollapsed, 'right-expanded': universityPanelCollapsed }"
     >
-      <ChatArea />
+      <ChatArea @toggle-university="toggleUniversityPanel" />
     </main>
     <aside
       class="university-panel"
@@ -42,29 +42,66 @@
       <div class="university-panel-header">
         <span class="university-panel-title">高校</span>
         <div class="university-panel-actions">
-          <button type="button" @click="setAllUniversityNodesExpanded(true)">全部展开</button>
-          <button type="button" @click="setAllUniversityNodesExpanded(false)">全部收起</button>
+          <button
+            type="button"
+            title="全部展开"
+            aria-label="全部展开"
+            @click="setAllUniversityNodesExpanded(true)"
+          >
+            <svg class="double-chevron expand-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <polyline points="6 9 12 3 18 9" />
+              <polyline points="6 15 12 21 18 15" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            title="全部收起"
+            aria-label="全部收起"
+            @click="setAllUniversityNodesExpanded(false)"
+          >
+            <svg class="double-chevron collapse-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <polyline points="6 3.5 12 9.5 18 3.5" />
+              <polyline points="6 20.5 12 14.5 18 20.5" />
+            </svg>
+          </button>
         </div>
       </div>
-      <nav class="university-tree" aria-label="高校节点">
-        <el-tree
-          ref="universityTreeRef"
-          :data="universityTree"
-          :props="{ label: 'label', children: 'children' }"
-          :indent="14"
-          node-key="id"
-          highlight-current
-          :current-node-key="currentUniversityNodeId"
-          @node-click="onUniversityNodeClick"
-        >
-          <template #default="{ data }">
-            <span class="university-tree-label">
-              <span v-if="data.isUniversity" class="university-symbol">🏫</span>
-              <span>{{ data.label }}</span>
-            </span>
+      <div class="university-panel-body">
+        <div class="university-detail-pane">
+          <template v-if="selectedNodeDetail">
+            <h3 class="university-detail-title">{{ selectedNodeDetail.label }}</h3>
+            <div class="university-detail-path">{{ selectedNodeDetail.path.join(' / ') }}</div>
           </template>
-        </el-tree>
-      </nav>
+          <div v-else class="university-detail-empty">请点击右侧节点查看详情</div>
+        </div>
+        <div
+          class="inner-resize-handle"
+          :class="{ dragging: resizingInner }"
+          title="拖动调整详情与高校的宽度比例"
+          @pointerdown.stop.prevent="startInnerResize($event)"
+        ></div>
+        <div class="university-tree-pane" :style="{ width: treePaneWidth + 'px' }">
+          <nav class="university-tree" aria-label="高校节点">
+            <el-tree
+              ref="universityTreeRef"
+              :data="universityTree"
+              :props="{ label: 'label', children: 'children' }"
+              :indent="14"
+              node-key="id"
+              highlight-current
+              :current-node-key="currentUniversityNodeId"
+              @node-click="onUniversityNodeClick"
+            >
+              <template #default="{ data }">
+                <span class="university-tree-label">
+                  <span v-if="data.isUniversity" class="university-symbol">🏫</span>
+                  <span>{{ data.label }}</span>
+                </span>
+              </template>
+            </el-tree>
+          </nav>
+        </div>
+      </div>
     </aside>
     <button
       class="sidebar-edge-handle"
@@ -75,20 +112,6 @@
       @pointerdown.prevent="toggleSidebar"
       @mouseenter="handleEdgeEnter"
       @mouseleave="handleEdgeLeave"
-    >
-      <span class="edge-pill">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
-      </span>
-    </button>
-    <button
-      class="university-edge-handle"
-      :class="{ open: !universityPanelCollapsed }"
-      type="button"
-      title="展开/收起高校节点"
-      aria-label="展开或收起高校节点"
-      @pointerdown.prevent="toggleUniversityPanel"
     >
       <span class="edge-pill">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -112,13 +135,16 @@ const edgeHovered = ref(false)
 const sidebarHovered = ref(false)
 let hideTimer = null
 let previewBlockedUntil = 0
-const universityPanelCollapsed = ref(false)
+const universityPanelCollapsed = ref(true)
 const DEFAULT_PANEL_WIDTH = 260
 const MIN_PANEL_WIDTH = 180
 const MAX_PANEL_WIDTH = 560
+const DEFAULT_UNIVERSITY_PANEL_WIDTH = 670
+const MIN_UNIVERSITY_PANEL_WIDTH = 360
+const MAX_UNIVERSITY_PANEL_WIDTH = 1120
 const MIN_MAIN_WIDTH = 320
 const sidebarWidth = ref(DEFAULT_PANEL_WIDTH)
-const universityPanelWidth = ref(DEFAULT_PANEL_WIDTH)
+const universityPanelWidth = ref(DEFAULT_UNIVERSITY_PANEL_WIDTH)
 const resizingSide = ref(null)
 const universityTreeRef = ref(null)
 let resizeStartX = 0
@@ -348,19 +374,28 @@ const universityTree = computed(() =>
 )
 
 const currentUniversityNodeId = ref(null)
+const selectedNodeDetail = ref(null)
 
-function onUniversityNodeClick(nodeData) {
+function onUniversityNodeClick(nodeData, node) {
   if (nodeData.isUniversity) {
     chatStore.selectedUniversity = nodeData.label
   }
+  const path = []
+  let cur = node
+  while (cur && cur.level > 0) {
+    path.unshift(cur.label)
+    cur = cur.parent
+  }
+  selectedNodeDetail.value = { label: nodeData.label, path }
 }
 
-watch(() => chatStore.selectedUniversity, (name) => {
+watch([() => chatStore.selectedUniversity, () => chatStore.universitySelectSeq], ([name]) => {
   if (!name) return
   const idx = chatStore.confirmedUniversities.findIndex(u => u.name === name)
   if (idx === -1) return
   universityPanelCollapsed.value = false
   currentUniversityNodeId.value = `uni-${idx}`
+  selectedNodeDetail.value = { label: name, path: [name] }
   nextTick(() => {
     universityTreeRef.value?.setCurrentKey(`uni-${idx}`)
   })
@@ -368,6 +403,7 @@ watch(() => chatStore.selectedUniversity, (name) => {
 
 watch(() => chatStore.currentSessionId, () => {
   currentUniversityNodeId.value = null
+  selectedNodeDetail.value = null
   universityTreeRef.value?.setCurrentKey(null)
 })
 
@@ -427,11 +463,56 @@ function setAllUniversityNodesExpanded(expanded) {
   })
 }
 
+const SIDEBAR_EDGE_WIDTH = 11
+const INNER_HANDLE_WIDTH = 6
+const INITIAL_TREE_RATIO = 0.4
+const MIN_INNER_PANE_WIDTH = 120
+const treePaneWidth = ref((DEFAULT_UNIVERSITY_PANEL_WIDTH - SIDEBAR_EDGE_WIDTH - INNER_HANDLE_WIDTH) * INITIAL_TREE_RATIO)
+const resizingInner = ref(false)
+let innerResizeStartX = 0
+let innerResizeStartWidth = 0
+let innerBodyWidth = 0
+
+function maxTreePaneWidth(bodyWidth) {
+  return bodyWidth - INNER_HANDLE_WIDTH - MIN_INNER_PANE_WIDTH
+}
+
+function clampTreePaneWidth(panelWidth) {
+  const maxTree = maxTreePaneWidth(panelWidth - SIDEBAR_EDGE_WIDTH)
+  treePaneWidth.value = Math.min(treePaneWidth.value, Math.max(MIN_INNER_PANE_WIDTH, maxTree))
+}
+
+function startInnerResize(event) {
+  resizingInner.value = true
+  innerResizeStartX = event.clientX
+  innerResizeStartWidth = treePaneWidth.value
+  innerBodyWidth = event.currentTarget.parentElement.getBoundingClientRect().width
+  window.addEventListener('pointermove', handleInnerResize)
+  window.addEventListener('pointerup', stopInnerResize, { once: true })
+}
+
+function handleInnerResize(event) {
+  if (!resizingInner.value || innerBodyWidth <= 0) return
+  const delta = event.clientX - innerResizeStartX
+  const next = innerResizeStartWidth - delta
+  treePaneWidth.value = Math.min(maxTreePaneWidth(innerBodyWidth), Math.max(MIN_INNER_PANE_WIDTH, next))
+}
+
+function stopInnerResize() {
+  resizingInner.value = false
+  window.removeEventListener('pointermove', handleInnerResize)
+}
+
+function minPanelWidth(side) {
+  return side === 'left' ? MIN_PANEL_WIDTH : MIN_UNIVERSITY_PANEL_WIDTH
+}
+
 function maxPanelWidth(side) {
   const oppositeWidth = side === 'left'
     ? (universityPanelCollapsed.value ? 0 : universityPanelWidth.value)
     : (sidebarCollapsed.value ? 0 : sidebarWidth.value)
-  return Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, window.innerWidth - oppositeWidth - MIN_MAIN_WIDTH))
+  const maxWidth = side === 'left' ? MAX_PANEL_WIDTH : MAX_UNIVERSITY_PANEL_WIDTH
+  return Math.max(minPanelWidth(side), Math.min(maxWidth, window.innerWidth - oppositeWidth - MIN_MAIN_WIDTH))
 }
 
 function startResize(side, event) {
@@ -446,9 +527,12 @@ function handleResize(event) {
   if (!resizingSide.value) return
   const direction = resizingSide.value === 'left' ? 1 : -1
   const width = resizeStartWidth + direction * (event.clientX - resizeStartX)
-  const nextWidth = Math.min(maxPanelWidth(resizingSide.value), Math.max(MIN_PANEL_WIDTH, width))
+  const nextWidth = Math.min(maxPanelWidth(resizingSide.value), Math.max(minPanelWidth(resizingSide.value), width))
   if (resizingSide.value === 'left') sidebarWidth.value = nextWidth
-  else universityPanelWidth.value = nextWidth
+  else {
+    universityPanelWidth.value = nextWidth
+    clampTreePaneWidth(nextWidth)
+  }
 }
 
 function stopResize() {
@@ -457,9 +541,13 @@ function stopResize() {
 }
 
 function resetPanelWidth(side) {
-  const width = Math.min(DEFAULT_PANEL_WIDTH, maxPanelWidth(side))
+  const defaultWidth = side === 'left' ? DEFAULT_PANEL_WIDTH : DEFAULT_UNIVERSITY_PANEL_WIDTH
+  const width = Math.min(defaultWidth, maxPanelWidth(side))
   if (side === 'left') sidebarWidth.value = width
-  else universityPanelWidth.value = width
+  else {
+    universityPanelWidth.value = width
+    clampTreePaneWidth(width)
+  }
 }
 
 onMounted(() => {
@@ -539,6 +627,8 @@ onBeforeUnmount(() => {
   bottom: 0;
   z-index: 70;
   width: calc(var(--university-panel-width) - var(--sidebar-edge-width));
+  display: flex;
+  flex-direction: column;
   background: #fff;
   border-left: 1px solid #e4e7ed;
   overflow: hidden !important;
@@ -573,7 +663,65 @@ onBeforeUnmount(() => {
   transform: translateX(var(--university-panel-width));
 }
 
+.university-panel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.university-detail-pane {
+  flex: 1 1 auto;
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  border-right: 1px solid #e4e7ed;
+  overflow: auto;
+}
+
+.university-detail-title {
+  margin: 2px 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+  word-break: break-all;
+}
+
+.university-detail-path {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.university-detail-empty {
+  margin: auto;
+  padding: 0 12px;
+  color: #a8abb2;
+  font-size: 13px;
+  text-align: center;
+}
+
+.inner-resize-handle {
+  flex: 0 0 6px;
+  cursor: col-resize;
+}
+
+.inner-resize-handle:hover,
+.inner-resize-handle.dragging {
+  background: #409eff;
+  opacity: 0.35;
+}
+
+.university-tree-pane {
+  flex: 0 0 auto;
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+}
+
 .university-panel-header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -596,14 +744,27 @@ onBeforeUnmount(() => {
 }
 
 .university-panel-actions button {
-  padding: 4px 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 28px;
+  padding: 2px 0;
   border: 1px solid #dcdfe6;
   border-radius: 5px;
   background: #fff;
   color: #606266;
-  font-size: 12px;
-  white-space: nowrap;
   cursor: pointer;
+}
+
+.double-chevron {
+  width: 18px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .university-panel-actions button:hover {
@@ -613,7 +774,7 @@ onBeforeUnmount(() => {
 }
 
 .university-tree {
-  height: calc(100% - 43px);
+  flex: 1;
   overflow: auto;
   padding: 10px 8px 30px;
 }
@@ -709,43 +870,4 @@ onBeforeUnmount(() => {
   transform: rotate(180deg);
 }
 
-.university-edge-handle {
-  position: fixed;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  z-index: 80;
-  width: var(--sidebar-edge-width);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #606266;
-}
-
-.university-edge-handle .edge-pill {
-  border-right: none;
-  border-left: 1px solid #e4e7ed;
-  border-radius: 10px 0 0 10px;
-  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.06);
-}
-
-.university-edge-handle:hover .edge-pill {
-  color: #409eff;
-  background: #ecf5ff;
-}
-
-.university-edge-handle svg {
-  width: 15px;
-  height: 15px;
-  transform: rotate(180deg);
-  transition: transform 0.3s ease;
-}
-
-.university-edge-handle.open svg {
-  transform: rotate(0);
-}
 </style>

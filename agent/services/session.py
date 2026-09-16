@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 # UTC+8 时区
 UTC8 = timezone(timedelta(hours=8))
 
+# 方式A：这些工具的 tool_calls 不懒加载，历史消息直接内联完整数据
+INLINE_TOOL_NAMES = {"todo_write", "query_understanding"}
+
 
 def _utc_now() -> int:
     """返回当前 UTC 时间戳（秒）"""
@@ -264,8 +267,8 @@ class SessionManager:
                         metadata = json.loads(mc["metadata"])
                     except (json.JSONDecodeError, TypeError):
                         metadata = None
-                # 方式A：todo_write 的 tool_calls 不懒加载，内联完整数据
-                if mc["type"] == "tool_call" and metadata and metadata.get("tool_name") == "todo_write":
+                # 方式A：todo_write / query_understanding 的 tool_calls 不懒加载，内联完整数据
+                if mc["type"] == "tool_call" and metadata and metadata.get("tool_name") in INLINE_TOOL_NAMES:
                     call_id = mc["content"]
                     tc_row = db.execute(
                         "SELECT parameters, status, result FROM tool_calls WHERE message_id = ? AND call_id = ?",
