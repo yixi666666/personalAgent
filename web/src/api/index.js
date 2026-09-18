@@ -89,3 +89,8 @@ export async function listTools() {
   const { data } = await api.get('/tools')
   return data
 }
+
+export async function getUniversity(name) {
+  const { data } = await api.get('/universities', { params: { name } })
+  return data
+}

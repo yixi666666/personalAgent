@@ -30,12 +30,11 @@
         :class="msg.role"
         :data-key="msg.id"
       >
-        <div class="message-avatar">
-          <el-avatar :size="32" :style="avatarStyle(msg.role)">
-            {{ msg.role === 'user' ? '我' : 'AI' }}
-          </el-avatar>
-        </div>
         <div class="message-body">
+          <div v-if="msg.isStreaming && chatStore.processingStage" class="processing-stage">
+            <span class="processing-dot"></span>
+            {{ chatStore.processingStage }}
+          </div>
           <!-- 按 segments 顺序渲染 -->
           <template v-for="(segment, sIdx) in msg.segments" :key="sIdx">
             <!-- Reasoning segment: 深度思考折叠框，工具符号内联 -->
@@ -163,16 +162,56 @@
                   <path class="thumb-body" d="M7 14 11.4 22a2.3 2.3 0 0 0 4.4-1.8L15 17h4.7a2 2 0 0 0 2-2.3l-1.5-9a2 2 0 0 0-2-1.7H7Z" />
                 </svg>
               </button>
+              <button
+                class="message-action-btn"
+                type="button"
+                title="在新对话中继续"
+                aria-label="在新对话中继续"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12h8" />
+                  <path d="m11 12 9-8" />
+                  <path d="m11 12 9 8" />
+                  <path d="M15 4h5v5" />
+                  <path d="M15 20h5v-5" />
+                </svg>
+              </button>
+              <button
+                class="message-action-btn"
+                type="button"
+                title="重试"
+                aria-label="重试"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                  <path d="M21 3v5h-5" />
+                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                  <path d="M8 16H3v5" />
+                </svg>
+              </button>
             </template>
+            <button
+              v-else
+              class="message-action-btn"
+              type="button"
+              title="回退"
+              aria-label="回退"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 14 4 9l5-5" />
+                <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />
+              </svg>
+            </button>
           </div>
         </div>
       </div>
 
       <div v-if="chatStore.loading && !chatStore.streaming" class="message-item assistant">
-        <div class="message-avatar">
-          <el-avatar :size="32" style="background: #409eff">AI</el-avatar>
-        </div>
         <div class="message-body">
+          <div v-if="chatStore.processingStage" class="processing-stage">
+            <span class="processing-dot"></span>
+            {{ chatStore.processingStage }}
+          </div>
           <div class="message-role">助手</div>
           <div class="message-content typing">
             <span class="dot"></span>
@@ -184,7 +223,7 @@
     </div>
 
     <div
-      v-if="userMessages.length"
+      v-if="userMessages.length > 2"
       class="msg-dot-column"
     >
       <div
@@ -564,12 +603,6 @@ async function copyMessage(msg) {
   }
 }
 
-function avatarStyle(role) {
-  return role === 'user'
-    ? { background: '#67c23a' }
-    : { background: '#409eff' }
-}
-
 function focusInput() {
   nextTick(() => {
     if (inputRef.value) {
@@ -721,7 +754,7 @@ onBeforeUnmount(() => {
 
 .msg-dot-column {
   position: absolute;
-  right: 6px;
+  right: 36px;
   top: 56px;
   bottom: 80px;
   z-index: 40;
@@ -830,15 +863,10 @@ onBeforeUnmount(() => {
 .message-item {
   display: flex;
   margin-bottom: 20px;
-  gap: 12px;
 }
 
 .message-item.user {
   flex-direction: row-reverse;
-}
-
-.message-avatar {
-  flex-shrink: 0;
 }
 
 .message-body {
@@ -846,7 +874,38 @@ onBeforeUnmount(() => {
 }
 
 .message-item.user .message-body {
+  margin-right: 44px;
   text-align: right;
+}
+
+.processing-stage {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+  padding: 4px 12px;
+  border-radius: 16px;
+  background: #f0f9ff;
+  color: #409eff;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  user-select: none;
+  width: fit-content;
+}
+
+.processing-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #409eff;
+  animation: processing-pulse 1s ease-in-out infinite;
+}
+
+@keyframes processing-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
 }
 
 .message-actions {

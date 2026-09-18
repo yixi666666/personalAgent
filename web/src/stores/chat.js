@@ -16,6 +16,7 @@ export const useChatStore = defineStore('chat', () => {
   const deepThinking = ref(false)
   const selectedUniversity = ref(null)
   const universitySelectSeq = ref(0)
+  const processingStage = ref('')
 
   const currentSession = computed(() => {
     return sessions.value.find(s => s.id === currentSessionId.value) || null
@@ -175,6 +176,7 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       messages.value = processed
+      localStorage.setItem('currentSessionId', sessionId)
     } catch (err) {
       console.error('加载会话失败:', err)
     }
@@ -187,6 +189,7 @@ export const useChatStore = defineStore('chat', () => {
       if (currentSessionId.value === sessionId) {
         currentSessionId.value = null
         messages.value = []
+        localStorage.removeItem('currentSessionId')
       }
     } catch (err) {
       console.error('删除会话失败:', err)
@@ -196,6 +199,7 @@ export const useChatStore = defineStore('chat', () => {
   function newSession() {
     currentSessionId.value = null
     messages.value = []
+    localStorage.removeItem('currentSessionId')
   }
 
   function selectSession(sessionId) {
@@ -209,6 +213,7 @@ export const useChatStore = defineStore('chat', () => {
     streaming.value = true
     streamingContent.value = ''
     streamingReasoning.value = ''
+    processingStage.value = '处理中...'
 
     // 先在本地添加用户消息
     const userMsg = {
@@ -229,6 +234,48 @@ export const useChatStore = defineStore('chat', () => {
 
     // 暂存工具调用信息
     let pendingStreamToolCalls = null
+    // 固定流水线阶段：0 处理中 → 1 高校识别 → 2 召回中 → 3 主模型阶段，只增不减
+    let preStage = 0
+    // 是否已开始输出正文，一旦开始锁定为「加载中...」，后续任何事件都不再改变
+    let contentStarted = false
+    // 阶段最短显示时长：防止多个 SSE 事件挤在同一批到达时，某个阶段被瞬间覆盖
+    const STAGE_MIN_MS = 400
+    const stageQueue = []
+    let stageTimer = null
+    let stageShownAt = Date.now()
+
+    function scheduleStage() {
+      if (stageTimer || stageQueue.length === 0) return
+      const wait = Math.max(0, STAGE_MIN_MS - (Date.now() - stageShownAt))
+      stageTimer = setTimeout(() => {
+        stageTimer = null
+        processingStage.value = stageQueue.shift()
+        stageShownAt = Date.now()
+        scheduleStage()
+      }, wait)
+    }
+
+    function showStage(text) {
+      if (processingStage.value === text && stageQueue.length === 0) return
+      if (stageQueue[stageQueue.length - 1] === text) return
+      stageQueue.push(text)
+      scheduleStage()
+    }
+
+    function enterStage(stage, text) {
+      if (contentStarted || stage <= preStage) return
+      preStage = stage
+      showStage(text)
+    }
+
+    function clearStage() {
+      if (stageTimer) {
+        clearTimeout(stageTimer)
+        stageTimer = null
+      }
+      stageQueue.length = 0
+      processingStage.value = ''
+    }
 
     try {
       await chatCompletionsStream(
@@ -237,12 +284,18 @@ export const useChatStore = defineStore('chat', () => {
         currentModel.value,
         deepThinking.value,
         (chunk) => {
-          if (chunk.session_id && !currentSessionId.value) {
-            currentSessionId.value = chunk.session_id
-            loadSessionsData()
+          if (chunk.session_id) {
+            if (!currentSessionId.value) {
+              currentSessionId.value = chunk.session_id
+              loadSessionsData()
+            }
+            // 固定：会话建立后进入高校识别
+            enterStage(1, '高校识别...')
           }
           const blocks = messages.value[assistantIdx].blocks
           if (chunk.reasoning_delta && chunk.reasoning_delta.content) {
+            // 深度思考不算正文，主模型阶段 → 思考中
+            enterStage(3, '思考中...')
             streamingReasoning.value += chunk.reasoning_delta.content
             // 更新或追加 reasoning block
             const lastBlock = blocks[blocks.length - 1]
@@ -253,6 +306,12 @@ export const useChatStore = defineStore('chat', () => {
             }
           }
           if (chunk.delta && chunk.delta.content) {
+            // 首个正文 delta → 加载中，并锁定，之后不再变化
+            if (!contentStarted) {
+              contentStarted = true
+              preStage = 3
+              showStage('加载中...')
+            }
             streamingContent.value += chunk.delta.content
             // 更新或追加 text block
             const lastBlock = blocks[blocks.length - 1]
@@ -263,6 +322,8 @@ export const useChatStore = defineStore('chat', () => {
             }
           }
           if (chunk.content_replace) {
+            // content_replace 只出现在主模型阶段；正文已开始时保持「加载中」不动
+            enterStage(3, '思考中...')
             streamingContent.value = chunk.content_replace.content
             const lastBlock = blocks[blocks.length - 1]
             if (lastBlock && lastBlock.type === 'text') {
@@ -273,6 +334,12 @@ export const useChatStore = defineStore('chat', () => {
           }
           if (chunk.tool_calls) {
             pendingStreamToolCalls = chunk.tool_calls
+            // 前置流程的两个工具不驱动状态；主模型自主调用其他工具时进入思考中
+            const isPreTool = chunk.tool_calls.every(tc => {
+              const n = tc.function?.name
+              return n === 'query_understanding' || n === 'university_recall'
+            })
+            if (!isPreTool) enterStage(3, '思考中...')
             // 插入 tool_call blocks
             for (const tc of chunk.tool_calls) {
               const block = { type: 'tool_call', toolCall: tc }
@@ -296,6 +363,10 @@ export const useChatStore = defineStore('chat', () => {
               if (tc) {
                 tc.result = tr.result
                 tc.status = tr.status
+                // 固定：高校识别完成后进入召回
+                if (tc.function?.name === 'query_understanding') {
+                  enterStage(2, '召回中...')
+                }
               }
               // 同步更新 blocks 中的 toolCall 引用
               for (const b of blocks) {
@@ -315,6 +386,7 @@ export const useChatStore = defineStore('chat', () => {
         () => {
           streaming.value = false
           loading.value = false
+          clearStage()
           messages.value[assistantIdx].isStreaming = false
           messages.value[assistantIdx]._wasStreaming = true
           streamingContent.value = ''
@@ -324,6 +396,7 @@ export const useChatStore = defineStore('chat', () => {
         (error) => {
           streaming.value = false
           loading.value = false
+          clearStage()
           // 添加错误 text block
           const blocks = messages.value[assistantIdx].blocks
           blocks.push({ type: 'text', content: `错误: ${error}` })
@@ -336,6 +409,7 @@ export const useChatStore = defineStore('chat', () => {
     } catch (err) {
       streaming.value = false
       loading.value = false
+      clearStage()
       const blocks = messages.value[assistantIdx].blocks
       blocks.push({ type: 'text', content: `请求失败: ${err.message}` })
       messages.value[assistantIdx].isStreaming = false
@@ -424,6 +498,7 @@ export const useChatStore = defineStore('chat', () => {
     confirmedUniversities,
     selectedUniversity,
     universitySelectSeq,
+    processingStage,
     loadSessions: loadSessionsData,
     loadSession: loadSessionData,
     removeSession,

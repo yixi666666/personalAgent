@@ -1,7 +1,7 @@
 <template>
   <div
     class="app-container"
-    :class="{ resizing: resizingSide }"
+    :class="{ resizing: resizingSide, 'university-fullscreen': universityFullscreen }"
     :style="{
       '--sidebar-width': sidebarWidth + 'px',
       '--university-panel-width': universityPanelWidth + 'px'
@@ -43,6 +43,34 @@
         <span class="university-panel-title">高校</span>
         <div class="university-panel-actions">
           <button
+            v-if="!universityFullscreen"
+            type="button"
+            title="全屏展开高校面板"
+            aria-label="全屏展开高校面板"
+            @click="enterUniversityFullscreen"
+          >
+            <svg class="fullscreen-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 4H4v5" />
+              <path d="M15 4h5v5" />
+              <path d="M9 20H4v-5" />
+              <path d="M15 20h5v-5" />
+            </svg>
+          </button>
+          <button
+            v-else
+            type="button"
+            title="解除全屏展开"
+            aria-label="解除全屏展开"
+            @click="exitUniversityFullscreen"
+          >
+            <svg class="fullscreen-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 9h5V4" />
+              <path d="M20 9h-5V4" />
+              <path d="M4 15h5v5" />
+              <path d="M20 15h-5v5" />
+            </svg>
+          </button>
+          <button
             type="button"
             title="全部展开"
             aria-label="全部展开"
@@ -68,7 +96,23 @@
       </div>
       <div class="university-panel-body">
         <div class="university-detail-pane">
-          <template v-if="selectedNodeDetail">
+          <template v-if="universityDetail">
+            <h3 class="university-detail-title">{{ universityDetail.name }}</h3>
+            <a
+              v-if="universityDetail.official_website"
+              class="university-detail-website"
+              :href="universityDetail.official_website"
+              target="_blank"
+              rel="noopener noreferrer"
+            >{{ universityDetail.official_website }}</a>
+            <div class="university-info-list">
+              <div v-for="row in universityInfoRows" :key="row.label" class="university-info-row">
+                <span class="university-info-label">{{ row.label }}</span>
+                <span class="university-info-value">{{ row.value }}</span>
+              </div>
+            </div>
+          </template>
+          <template v-else-if="selectedNodeDetail">
             <h3 class="university-detail-title">{{ selectedNodeDetail.label }}</h3>
             <div class="university-detail-path">{{ selectedNodeDetail.path.join(' / ') }}</div>
           </template>
@@ -89,6 +133,7 @@
               :indent="14"
               node-key="id"
               highlight-current
+              :expand-on-click-node="false"
               :current-node-key="currentUniversityNodeId"
               @node-click="onUniversityNodeClick"
             >
@@ -127,6 +172,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import SessionList from './components/SessionList.vue'
 import ChatArea from './components/ChatArea.vue'
 import { useChatStore } from './stores/chat'
+import { getUniversity } from './api'
 
 const chatStore = useChatStore()
 const sidebarCollapsed = ref(false)
@@ -136,6 +182,7 @@ const sidebarHovered = ref(false)
 let hideTimer = null
 let previewBlockedUntil = 0
 const universityPanelCollapsed = ref(true)
+const universityFullscreen = ref(false)
 const DEFAULT_PANEL_WIDTH = 260
 const MIN_PANEL_WIDTH = 180
 const MAX_PANEL_WIDTH = 560
@@ -375,10 +422,55 @@ const universityTree = computed(() =>
 
 const currentUniversityNodeId = ref(null)
 const selectedNodeDetail = ref(null)
+const universityDetail = ref(null)
+const lastClickedNodeKey = ref(null)
+let universityDetailSeq = 0
+
+const CATEGORY_TEXT = { ordinary: '普通高校', adult: '成人高校' }
+
+const universityInfoRows = computed(() => {
+  const info = universityDetail.value
+  if (!info) return []
+  return [
+    { label: '学校标识码', value: info.code },
+    { label: '别名', value: (info.aliases || []).join('、') },
+    { label: '学校类型', value: CATEGORY_TEXT[info.category] || info.category },
+    { label: '主管部门', value: info.competent_department },
+    { label: '所在地', value: [info.province, info.city].filter(Boolean).join(' ') },
+    { label: '办学层次', value: info.edu_level },
+    { label: '办学性质', value: info.school_nature },
+    { label: '备注', value: info.raw_remark },
+  ].filter(row => row.value)
+})
+
+/**
+ * 加载高校基础信息，name 为空时清空（点击子节点回退到面包屑展示）
+ */
+async function loadUniversityDetail(name) {
+  const seq = ++universityDetailSeq
+  universityDetail.value = null
+  if (!name) return
+  try {
+    const data = await getUniversity(name)
+    if (seq === universityDetailSeq) universityDetail.value = data
+  } catch (err) {
+    console.error('加载高校信息失败:', err)
+  }
+}
 
 function onUniversityNodeClick(nodeData, node) {
+  // 第一次点击只选中，第二次点击同一节点才展开/收起（点击展开箭头由 el-tree 自行处理）
+  if (lastClickedNodeKey.value === nodeData.id && !node.isLeaf) {
+    if (node.expanded) node.collapse()
+    else node.expand()
+  }
+  lastClickedNodeKey.value = nodeData.id
+
   if (nodeData.isUniversity) {
+    // 高校根节点：统一交给 watch 处理（展开面板 + 选中节点 + 加载真实信息）
     chatStore.selectedUniversity = nodeData.label
+    chatStore.universitySelectSeq++
+    return
   }
   const path = []
   let cur = node
@@ -387,6 +479,7 @@ function onUniversityNodeClick(nodeData, node) {
     cur = cur.parent
   }
   selectedNodeDetail.value = { label: nodeData.label, path }
+  loadUniversityDetail(null)
 }
 
 watch([() => chatStore.selectedUniversity, () => chatStore.universitySelectSeq], ([name]) => {
@@ -395,7 +488,10 @@ watch([() => chatStore.selectedUniversity, () => chatStore.universitySelectSeq],
   if (idx === -1) return
   universityPanelCollapsed.value = false
   currentUniversityNodeId.value = `uni-${idx}`
+  // 节点已置为选中态，随后在树上点击它即视为第二次点击，直接展开
+  lastClickedNodeKey.value = `uni-${idx}`
   selectedNodeDetail.value = { label: name, path: [name] }
+  loadUniversityDetail(name)
   nextTick(() => {
     universityTreeRef.value?.setCurrentKey(`uni-${idx}`)
   })
@@ -403,7 +499,9 @@ watch([() => chatStore.selectedUniversity, () => chatStore.universitySelectSeq],
 
 watch(() => chatStore.currentSessionId, () => {
   currentUniversityNodeId.value = null
+  lastClickedNodeKey.value = null
   selectedNodeDetail.value = null
+  loadUniversityDetail(null)
   universityTreeRef.value?.setCurrentKey(null)
 })
 
@@ -454,6 +552,15 @@ function toggleSidebar() {
 
 function toggleUniversityPanel() {
   universityPanelCollapsed.value = !universityPanelCollapsed.value
+}
+
+function enterUniversityFullscreen() {
+  universityFullscreen.value = true
+  universityPanelCollapsed.value = false
+}
+
+function exitUniversityFullscreen() {
+  universityFullscreen.value = false
 }
 
 function setAllUniversityNodesExpanded(expanded) {
@@ -550,10 +657,16 @@ function resetPanelWidth(side) {
   }
 }
 
-onMounted(() => {
-  chatStore.loadSessions()
-  chatStore.loadModels()
-  chatStore.loadTools()
+onMounted(async () => {
+  await Promise.all([
+    chatStore.loadSessions(),
+    chatStore.loadModels(),
+    chatStore.loadTools()
+  ])
+  const savedSessionId = localStorage.getItem('currentSessionId')
+  if (savedSessionId) {
+    chatStore.selectSession(savedSessionId)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -663,6 +776,21 @@ onBeforeUnmount(() => {
   transform: translateX(var(--university-panel-width));
 }
 
+.app-container.university-fullscreen .app-sidebar,
+.app-container.university-fullscreen .sidebar-edge-handle,
+.app-container.university-fullscreen .app-main,
+.app-container.university-fullscreen .right-resize-handle {
+  display: none;
+}
+
+/* 全屏时右边缘保持与普通态一致（right 不变），仅左边界扩展到 0，
+   避免贴右布局的头部按钮和树区发生位置偏移 */
+.app-container.university-fullscreen .university-panel {
+  left: 0;
+  width: auto;
+  border-left: none;
+}
+
 .university-panel-body {
   flex: 1;
   min-height: 0;
@@ -691,6 +819,40 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: #909399;
   line-height: 1.6;
+  word-break: break-all;
+}
+
+.university-detail-website {
+  display: inline-block;
+  margin-bottom: 10px;
+  color: #409eff;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.university-info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.university-info-row {
+  display: flex;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.university-info-label {
+  flex-shrink: 0;
+  width: 76px;
+  color: #909399;
+}
+
+.university-info-value {
+  flex: 1;
+  min-width: 0;
+  color: #303133;
   word-break: break-all;
 }
 
@@ -763,6 +925,16 @@ onBeforeUnmount(() => {
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.fullscreen-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
