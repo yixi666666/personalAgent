@@ -1,12 +1,11 @@
 <template>
-  <div class="chat-area">
+  <div class="chat-area" @mousemove="handleDotPriority">
     <div class="chat-header">
-      <span class="chat-title">
-        {{ chatStore.currentSessionId
-          ? (chatStore.currentSession?.title || '会话 ' + chatStore.currentSessionId.slice(0, 8))
-          : '新对话' }}
+      <span v-if="chatStore.currentSessionId" class="chat-title">
+        {{ chatStore.currentSession?.title || '会话 ' + chatStore.currentSessionId.slice(0, 8) }}
       </span>
       <button
+        v-if="chatStore.currentSessionId"
         class="university-toggle-btn"
         type="button"
         title="展开/收起高校面板"
@@ -17,7 +16,23 @@
       </button>
     </div>
 
-    <div ref="messageListRef" class="message-list scrollable" @scroll="handleScroll">
+    <div class="chat-main" :class="{ 'new-session': isNewSession }">
+      <section v-if="isNewSession" class="new-session-welcome">
+        <h1>想了解什么高校信息呢？</h1>
+        <div class="recommended-questions">
+          <button
+            v-for="question in recommendedQuestions"
+            :key="question"
+            type="button"
+            :disabled="chatStore.loading || !chatStore.currentModel"
+            @click="sendRecommendation(question)"
+          >
+            {{ question }}
+          </button>
+        </div>
+      </section>
+
+      <div v-show="!isNewSession" ref="messageListRef" class="message-list scrollable" @scroll="handleScroll">
       <div v-if="messages.length === 0" class="empty-state">
         <el-icon :size="48" color="#c0c4cc"><ChatDotRound /></el-icon>
         <p>开始一段新对话吧</p>
@@ -227,6 +242,7 @@
     <div
       v-if="userMessages.length > 2"
       class="msg-dot-column"
+      :class="{ prioritized: dotPrioritized }"
     >
       <div
         class="msg-dot-track"
@@ -313,6 +329,7 @@
         </el-button>
       </div>
     </div>
+    </div>
   </div>
 </template>
 
@@ -355,6 +372,7 @@ const copiedMessageId = ref(null)
 const messageFeedback = ref({})
 const collapseExpandedByMessage = ref({})
 const dotListVisible = ref(false)
+const dotPrioritized = ref(false)
 let copyResetTimer = null
 let dotHideTimer = null
 
@@ -382,8 +400,15 @@ onMounted(() => {
   autoResize()
 })
 
+const recommendedQuestions = [
+  '介绍一下你自己',
+  '帮我对比浙江大学和南京大学',
+  '哪些高校的人工智能专业比较强？',
+]
+
 const messages = computed(() => chatStore.messages)
 const userMessages = computed(() => messages.value.filter(msg => msg.role === 'user'))
+const isNewSession = computed(() => !chatStore.currentSessionId && messages.value.length === 0)
 
 const isDeepThinkModel = computed(() => {
   const model = chatStore.models.find(m => m.id === chatStore.currentModel)
@@ -610,6 +635,17 @@ function scrollToBottom() {
   })
 }
 
+function handleDotPriority(event) {
+  const track = event.currentTarget.querySelector('.msg-dot-track')
+  if (!track) {
+    dotPrioritized.value = false
+    return
+  }
+  const rect = track.getBoundingClientRect()
+  dotPrioritized.value = event.clientX >= rect.left && event.clientX <= rect.right
+    && event.clientY >= rect.top && event.clientY <= rect.bottom
+}
+
 function showDotList() {
   clearTimeout(dotHideTimer)
   dotListVisible.value = true
@@ -673,6 +709,12 @@ function handleKeydown(e) {
   }
 }
 
+function sendRecommendation(question) {
+  if (chatStore.loading || !chatStore.currentModel) return
+  isUserAtBottom.value = true
+  chatStore.sendMessage(question)
+}
+
 function handleSend() {
   const text = inputText.value.trim()
   if (!text || chatStore.loading) return
@@ -703,7 +745,6 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: 12px 20px;
-  border-bottom: 1px solid #e4e7ed;
   background: #fff;
   flex-shrink: 0;
   position: relative;
@@ -736,8 +777,69 @@ onBeforeUnmount(() => {
   background: #ecf5ff;
 }
 
+.chat-main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-main.new-session {
+  justify-content: center;
+  padding-bottom: 8vh;
+}
+
+.new-session-welcome {
+  width: min(720px, calc(100% - 40px));
+  margin: 0 auto 10px;
+  text-align: center;
+}
+
+.new-session-welcome h1 {
+  margin: 0 0 24px;
+  color: #303133;
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.recommended-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recommended-questions button {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #606266;
+  font: inherit;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.2s, background-color 0.2s;
+}
+
+.recommended-questions button:hover:not(:disabled) {
+  background: #f5f7fa;
+  color: #409eff;
+}
+
+.recommended-questions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.new-session .chat-input-wrapper {
+  width: min(720px, calc(100% - 40px));
+  margin: 0 auto;
+}
+
 .message-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden !important;
   padding: 16px 48px;
@@ -753,6 +855,10 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   width: 32px;
+}
+
+.msg-dot-column.prioritized {
+  z-index: 60;
 }
 
 /* 最多展示 8 个圆点的高度，更多则在轨道内滚动 */
@@ -1300,13 +1406,19 @@ onBeforeUnmount(() => {
 .markdown-body :deep(a:hover) { text-decoration: underline; }
 
 .chat-input-wrapper {
-  background: #fff;
+  position: relative;
+  z-index: 50;
   flex-shrink: 0;
+  margin: 16px 92px 12px 48px;
+  overflow: hidden;
+  border: 1px solid #dcdfe6;
+  border-radius: 12px;
+  background: #fff;
 }
 
 .chat-input {
   display: flex;
-  padding: 16px 20px 0;
+  padding: 10px 12px 0;
 }
 
 .chat-input :deep(.el-textarea) {
@@ -1314,6 +1426,9 @@ onBeforeUnmount(() => {
 }
 
 .chat-input :deep(.el-textarea__inner) {
+  padding: 5px 0;
+  border: 0;
+  box-shadow: none;
   font-size: 14px;
 }
 
@@ -1321,7 +1436,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 20px 12px;
+  padding: 8px 12px 10px;
 }
 
 .input-actions .el-button {
@@ -1334,6 +1449,11 @@ onBeforeUnmount(() => {
 
 .model-selector-inline :deep(.el-select) {
   width: 140px;
+}
+
+.model-selector-inline :deep(.el-select__caret) {
+  transform: rotate(-90deg) !important;
+  transition: none;
 }
 
 .action-btn {

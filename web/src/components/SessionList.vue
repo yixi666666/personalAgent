@@ -1,6 +1,17 @@
 <template>
   <div class="sidebar">
     <div class="sidebar-header">
+      <div class="sidebar-brand">
+        <span class="sidebar-brand-name">小忆</span>
+        <div class="sidebar-brand-actions">
+          <button class="header-icon-btn" type="button" title="收件箱" aria-label="收件箱">
+            <el-icon><Message /></el-icon>
+          </button>
+          <button class="header-icon-btn" type="button" title="搜索会话" aria-label="搜索会话">
+            <el-icon><Search /></el-icon>
+          </button>
+        </div>
+      </div>
       <el-button type="primary" class="new-chat-btn" @click="chatStore.newSession()">
         <el-icon><Plus /></el-icon>
         <span>新建会话</span>
@@ -83,13 +94,16 @@
         <el-avatar :size="36" style="background: #409eff">忆</el-avatar>
         <span class="user-nickname">忆昔</span>
       </div>
+      <button class="settings-btn" type="button" title="设置" aria-label="设置">
+        <el-icon><Setting /></el-icon>
+      </button>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed } from 'vue'
-import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled } from '@element-plus/icons-vue'
+import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled, Setting, Search, Message } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 
 const chatStore = useChatStore()
@@ -147,8 +161,48 @@ function handlePinnedCommand() {}
 }
 
 .sidebar-header {
-  padding: 16px;
+  padding: 12px 16px 16px;
   flex-shrink: 0;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  margin-bottom: 10px;
+}
+
+.sidebar-brand-name {
+  color: #303133;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.sidebar-brand-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.header-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #606266;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.header-icon-btn:hover {
+  background: #e8eaed;
+  color: #409eff;
 }
 
 .new-chat-btn {
@@ -273,7 +327,30 @@ function handlePinnedCommand() {}
 }
 
 .sidebar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 8px 16px;
   border-top: 1px solid #e4e7ed;
+}
+
+.settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #606266;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.settings-btn:hover {
+  background: #e8eaed;
+  color: #409eff;
 }
 </style>

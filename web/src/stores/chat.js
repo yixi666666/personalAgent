@@ -203,6 +203,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function selectSession(sessionId) {
+    currentSessionId.value = sessionId
     loadSessionData(sessionId)
   }
 
