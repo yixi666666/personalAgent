@@ -8,31 +8,73 @@
     </div>
 
     <div class="session-list scrollable">
+      <div class="session-group-label">置顶</div>
       <div
-        v-for="s in chatStore.sessions"
-        :key="s.id"
-        class="session-item"
-        :class="{ active: s.id === chatStore.currentSessionId }"
-        @click="chatStore.selectSession(s.id)"
+        v-for="p in pinnedSessions"
+        :key="p.id"
+        class="session-item pinned"
       >
-        <el-icon class="session-icon"><ChatDotRound /></el-icon>
+        <el-icon class="session-icon pinned-icon"><StarFilled /></el-icon>
         <div class="session-info">
-          <div class="session-title">{{ s.title || '会话 ' + s.id.slice(0, 8) }}</div>
-          <div class="session-meta">
-            <span>{{ s.message_count }} 条消息</span>
-            <span v-if="s.display_time" class="session-time">{{ s.display_time }}</span>
-          </div>
+          <div class="session-title">{{ p.title }}</div>
         </div>
-        <el-button
-          class="delete-btn"
-          type="danger"
-          text
-          size="small"
-          @click.stop="chatStore.removeSession(s.id)"
+        <el-dropdown
+          class="session-menu"
+          trigger="click"
+          placement="bottom-end"
+          @command="handlePinnedCommand"
         >
-          <el-icon><Delete /></el-icon>
-        </el-button>
+          <el-button class="more-btn" text size="small" @click.stop>
+            <el-icon><MoreFilled /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="unpin">
+                <el-icon><StarFilled /></el-icon>取消置顶
+              </el-dropdown-item>
+              <el-dropdown-item command="delete" divided style="color: var(--el-color-danger)">
+                <el-icon><Delete /></el-icon>删除
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
+
+      <template v-for="group in sessionGroups" :key="group.key">
+        <div v-if="group.items.length > 0" class="session-group-label">{{ group.label }}</div>
+        <div
+          v-for="s in group.items"
+          :key="s.id"
+          class="session-item"
+          :class="{ active: s.id === chatStore.currentSessionId }"
+          @click="chatStore.selectSession(s.id)"
+        >
+          <el-icon class="session-icon"><ChatDotRound /></el-icon>
+          <div class="session-info">
+            <div class="session-title">{{ s.title || '会话 ' + s.id.slice(0, 8) }}</div>
+          </div>
+          <el-dropdown
+            class="session-menu"
+            trigger="click"
+            placement="bottom-end"
+            @command="command => handleSessionCommand(command, s.id)"
+          >
+            <el-button class="more-btn" text size="small" @click.stop>
+              <el-icon><MoreFilled /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="pin">
+                  <el-icon><Star /></el-icon>置顶
+                </el-dropdown-item>
+                <el-dropdown-item command="delete" divided style="color: var(--el-color-danger)">
+                  <el-icon><Delete /></el-icon>删除
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+      </template>
       <el-empty v-if="chatStore.sessions.length === 0" description="暂无会话" :image-size="60" />
     </div>
 
@@ -46,10 +88,51 @@
 </template>
 
 <script setup>
-import { Plus, Delete, ChatDotRound } from '@element-plus/icons-vue'
+import { computed } from 'vue'
+import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 
 const chatStore = useChatStore()
+
+// 置顶会话：当前为前端写死的占位数据，后续接入后端后替换
+const pinnedSessions = [
+  { id: 'pinned-1', title: '2026 高考志愿方案咨询' },
+]
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+// display_time 格式为后端输出的 'YYYY-MM-DD HH:MM'（UTC+8，与浏览器本地时区一致）
+function sessionTimeMs(session) {
+  if (!session.display_time) return null
+  const t = new Date(session.display_time.replace(' ', 'T')).getTime()
+  return Number.isNaN(t) ? null : t
+}
+
+// 会话按时间分组：最近（7 天内）/ 30 天内 / 更早，空分组不渲染
+const sessionGroups = computed(() => {
+  const now = Date.now()
+  const groups = [
+    { key: 'recent', label: '最近', items: [] },
+    { key: 'month', label: '30 天内', items: [] },
+    { key: 'older', label: '更早', items: [] },
+  ]
+  for (const s of chatStore.sessions) {
+    const t = sessionTimeMs(s)
+    const age = t === null ? Infinity : now - t
+    if (age <= 7 * DAY_MS) groups[0].items.push(s)
+    else if (age <= 30 * DAY_MS) groups[1].items.push(s)
+    else groups[2].items.push(s)
+  }
+  return groups
+})
+
+function handleSessionCommand(command, sessionId) {
+  if (command === 'delete') chatStore.removeSession(sessionId)
+  // command === 'pin'：置顶功能待接入，暂不处理
+}
+
+// 置顶条目菜单（取消置顶/删除）：当前只放按钮，功能待接入
+function handlePinnedCommand() {}
 </script>
 
 <style scoped>
@@ -92,6 +175,7 @@ const chatStore = useChatStore()
 }
 
 .session-item {
+  position: relative;
   display: flex;
   align-items: center;
   padding: 10px 12px;
@@ -126,30 +210,66 @@ const chatStore = useChatStore()
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.session-meta {
+.session-group-label {
+  padding: 10px 12px 4px;
   font-size: 11px;
+  font-weight: 600;
   color: #909399;
-  margin-top: 2px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  letter-spacing: 0.5px;
 }
 
-.session-time {
-  color: #c0c4cc;
+.session-group-label:first-child {
+  padding-top: 4px;
 }
 
-.delete-btn {
+.session-item.pinned {
+  cursor: default;
+}
+
+.session-item.pinned:hover {
+  background: transparent;
+}
+
+.pinned-icon {
+  color: #e6a23c;
+}
+
+/* 三点菜单不占布局空间，悬停时浮在条目右侧内容之上 */
+.session-menu {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  line-height: 1;
   opacity: 0;
   transition: opacity 0.2s;
-  flex-shrink: 0;
 }
 
-.session-item:hover .delete-btn {
+.session-item:hover .session-menu {
   opacity: 1;
+}
+
+.more-btn {
+  color: #909399;
+}
+
+/* 按钮背景与条目当前背景一致，避免文字从三点下透出 */
+.session-item:hover .more-btn {
+  background: #e8eaed;
+}
+
+.session-item.active:hover .more-btn {
+  background: #d9ecff;
+}
+
+.session-item.pinned:hover .more-btn {
+  background: #f5f7fa;
+}
+
+.more-btn:hover {
+  color: #409eff;
 }
 
 .sidebar-footer {
