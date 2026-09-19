@@ -38,17 +38,20 @@ class LLMClient:
         return config.resolve_model_provider(model)
 
     def _build_extra_body(self, provider: dict, stream: bool, deep_thinking: bool = False) -> dict:
-        """构建 extra_body：星火模型关闭联网搜索，非本地模型流式时包含 stream_options，DeepSeek/GLM 思考模式"""
+        """构建各模型提供商的扩展请求参数"""
         extra: dict = {}
-        if provider.get("provider") == "spark":
+        provider_name = provider.get("provider")
+        if provider_name == "spark":
             extra["search_disable"] = True
-        if stream and provider.get("provider") != "local":
+        if stream and provider_name != "local":
             extra["stream_options"] = {"include_usage": True}
-        if provider.get("provider") in ("deepseek", "glm"):
+        if provider_name in ("deepseek", "glm"):
             if deep_thinking:
                 extra["thinking"] = {"type": "enabled"}
             else:
                 extra["thinking"] = {"type": "disabled"}
+        if provider_name == "qwen":
+            extra["enable_thinking"] = deep_thinking
         return extra or None
 
     async def chat_completion(

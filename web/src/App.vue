@@ -40,7 +40,38 @@
         @dblclick.stop="resetPanelWidth('right')"
       ></div>
       <div class="university-panel-header">
-        <span class="university-panel-title">高校</span>
+        <nav class="university-panel-breadcrumb" aria-label="当前位置">
+          <template v-for="(item, index) in breadcrumbLevels" :key="item.nodeId">
+            <span v-if="index > 0" class="university-panel-breadcrumb-separator">/</span>
+            <el-dropdown trigger="click" @command="selectBreadcrumbNode">
+              <button class="university-panel-breadcrumb-trigger" type="button">
+                <span>{{ item.label }}</span>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item
+                    v-for="option in item.options"
+                    :key="option.id"
+                    :command="option.id"
+                    :class="{ 'is-current': option.id === item.nodeId }"
+                  >
+                    {{ option.label }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </template>
+          <button
+            v-if="currentBreadcrumbNode?.data?.children?.length"
+            class="university-panel-breadcrumb-next"
+            type="button"
+            title="进入第一个叶子节点"
+            aria-label="进入第一个叶子节点"
+            @click="selectFirstBreadcrumbLeaf"
+          >
+            ›
+          </button>
+        </nav>
         <div class="university-panel-actions">
           <button
             v-if="!universityFullscreen"
@@ -114,17 +145,25 @@
           </template>
           <template v-else-if="selectedNodeDetail">
             <h3 class="university-detail-title">{{ selectedNodeDetail.label }}</h3>
-            <div class="university-detail-path">{{ selectedNodeDetail.path.join(' / ') }}</div>
           </template>
           <div v-else class="university-detail-empty">请点击右侧节点查看详情</div>
         </div>
         <div
           class="inner-resize-handle"
-          :class="{ dragging: resizingInner }"
+          :class="{ dragging: resizingInner, hidden: universityTreeCollapsed }"
           title="拖动调整详情与高校的宽度比例"
           @pointerdown.stop.prevent="startInnerResize($event)"
         ></div>
-        <div class="university-tree-pane" :style="{ width: treePaneWidth + 'px' }">
+        <div
+          class="university-tree-pane"
+          :class="{
+            collapsed: universityTreeCollapsed && !universityTreePreview,
+            preview: universityTreePreview
+          }"
+          :style="{ width: treePaneWidth + 'px' }"
+          @mouseenter="handleUniversityTreeEnter"
+          @mouseleave="handleUniversityTreeLeave"
+        >
           <nav class="university-tree" aria-label="高校节点">
             <el-tree
               ref="universityTreeRef"
@@ -148,6 +187,23 @@
         </div>
       </div>
     </aside>
+    <button
+      v-if="universityTree.length > 0 && !universityPanelCollapsed"
+      class="university-tree-edge-handle"
+      :class="{ open: !universityTreeCollapsed }"
+      type="button"
+      title="展开/收起高校节点列表"
+      aria-label="展开或收起高校节点列表"
+      @pointerdown.prevent="toggleUniversityTree"
+      @mouseenter="handleUniversityTreeEdgeEnter"
+      @mouseleave="handleUniversityTreeEdgeLeave"
+    >
+      <span class="university-tree-edge-pill">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+      </span>
+    </button>
     <button
       class="sidebar-edge-handle"
       :class="{ open: !sidebarCollapsed }"
@@ -182,6 +238,12 @@ const sidebarHovered = ref(false)
 let hideTimer = null
 let previewBlockedUntil = 0
 const universityPanelCollapsed = ref(true)
+const universityTreeCollapsed = ref(false)
+const universityTreePreview = ref(false)
+const universityTreeEdgeHovered = ref(false)
+const universityTreeHovered = ref(false)
+let universityTreeHideTimer = null
+let universityTreePreviewBlockedUntil = 0
 const universityFullscreen = ref(false)
 const DEFAULT_PANEL_WIDTH = 260
 const MIN_PANEL_WIDTH = 180
@@ -423,6 +485,35 @@ const universityTree = computed(() =>
 const currentUniversityNodeId = ref(null)
 const selectedNodeDetail = ref(null)
 const universityDetail = ref(null)
+
+const currentBreadcrumbNode = computed(() =>
+  currentUniversityNodeId.value
+    ? universityTreeRef.value?.getNode(currentUniversityNodeId.value)
+    : null
+)
+
+const breadcrumbLevels = computed(() => {
+  if (!currentUniversityNodeId.value) {
+    return [{ nodeId: 'university-root', label: '高校', options: universityTree.value }]
+  }
+  const node = currentBreadcrumbNode.value
+  if (!node) return [{ nodeId: 'university-root', label: '高校', options: universityTree.value }]
+
+  const levels = []
+  let current = node
+  while (current && current.level > 0) {
+    const siblings = current.parent?.level === 0
+      ? universityTree.value
+      : (current.parent?.data?.children || [])
+    levels.unshift({
+      nodeId: current.data.id,
+      label: current.data.label,
+      options: siblings,
+    })
+    current = current.parent
+  }
+  return levels
+})
 const lastClickedNodeKey = ref(null)
 let universityDetailSeq = 0
 
@@ -458,28 +549,54 @@ async function loadUniversityDetail(name) {
   }
 }
 
+function selectTreeNode(node) {
+  if (!node) return
+  currentUniversityNodeId.value = node.data.id
+  universityTreeRef.value?.setCurrentKey(node.data.id)
+
+  const ancestors = []
+  let parent = node.parent
+  while (parent && parent.level > 0) {
+    ancestors.unshift(parent)
+    parent = parent.parent
+  }
+  ancestors.forEach(ancestor => ancestor.expand())
+
+  if (node.data.isUniversity) {
+    chatStore.selectedUniversity = node.data.label
+    chatStore.universitySelectSeq++
+    return
+  }
+
+  const path = []
+  let current = node
+  while (current && current.level > 0) {
+    path.unshift(current.label)
+    current = current.parent
+  }
+  lastClickedNodeKey.value = node.data.id
+  selectedNodeDetail.value = { label: node.data.label, path }
+  loadUniversityDetail(null)
+}
+
+function selectBreadcrumbNode(nodeId) {
+  selectTreeNode(universityTreeRef.value?.getNode(nodeId))
+}
+
+function selectFirstBreadcrumbLeaf() {
+  let node = currentBreadcrumbNode.value?.childNodes?.[0]
+  if (!node) return
+  while (node.childNodes?.length) node = node.childNodes[0]
+  selectTreeNode(node)
+}
+
 function onUniversityNodeClick(nodeData, node) {
   // 第一次点击只选中，第二次点击同一节点才展开/收起（点击展开箭头由 el-tree 自行处理）
   if (lastClickedNodeKey.value === nodeData.id && !node.isLeaf) {
     if (node.expanded) node.collapse()
     else node.expand()
   }
-  lastClickedNodeKey.value = nodeData.id
-
-  if (nodeData.isUniversity) {
-    // 高校根节点：统一交给 watch 处理（展开面板 + 选中节点 + 加载真实信息）
-    chatStore.selectedUniversity = nodeData.label
-    chatStore.universitySelectSeq++
-    return
-  }
-  const path = []
-  let cur = node
-  while (cur && cur.level > 0) {
-    path.unshift(cur.label)
-    cur = cur.parent
-  }
-  selectedNodeDetail.value = { label: nodeData.label, path }
-  loadUniversityDetail(null)
+  selectTreeNode(node)
 }
 
 watch([() => chatStore.selectedUniversity, () => chatStore.universitySelectSeq], ([name]) => {
@@ -498,6 +615,7 @@ watch([() => chatStore.selectedUniversity, () => chatStore.universitySelectSeq],
 })
 
 watch(() => chatStore.currentSessionId, () => {
+  universityTreePreview.value = false
   currentUniversityNodeId.value = null
   lastClickedNodeKey.value = null
   selectedNodeDetail.value = null
@@ -550,6 +668,51 @@ function toggleSidebar() {
   if (sidebarCollapsed.value) previewBlockedUntil = Date.now() + 500
 }
 
+function clearUniversityTreeHideTimer() {
+  if (universityTreeHideTimer !== null) {
+    clearTimeout(universityTreeHideTimer)
+    universityTreeHideTimer = null
+  }
+}
+
+function scheduleUniversityTreePreviewHide() {
+  clearUniversityTreeHideTimer()
+  universityTreeHideTimer = setTimeout(() => {
+    if (universityTreeCollapsed.value && !universityTreeEdgeHovered.value && !universityTreeHovered.value) {
+      universityTreePreview.value = false
+    }
+  }, 160)
+}
+
+function handleUniversityTreeEdgeEnter() {
+  universityTreeEdgeHovered.value = true
+  clearUniversityTreeHideTimer()
+  if (universityTreeCollapsed.value && Date.now() >= universityTreePreviewBlockedUntil) {
+    universityTreePreview.value = true
+  }
+}
+
+function handleUniversityTreeEdgeLeave() {
+  universityTreeEdgeHovered.value = false
+  scheduleUniversityTreePreviewHide()
+}
+
+function handleUniversityTreeEnter() {
+  universityTreeHovered.value = true
+  clearUniversityTreeHideTimer()
+}
+
+function handleUniversityTreeLeave() {
+  universityTreeHovered.value = false
+  scheduleUniversityTreePreviewHide()
+}
+
+function toggleUniversityTree() {
+  universityTreeCollapsed.value = !universityTreeCollapsed.value
+  universityTreePreview.value = false
+  if (universityTreeCollapsed.value) universityTreePreviewBlockedUntil = Date.now() + 500
+}
+
 function toggleUniversityPanel() {
   universityPanelCollapsed.value = !universityPanelCollapsed.value
 }
@@ -584,9 +747,11 @@ function maxTreePaneWidth(bodyWidth) {
   return bodyWidth - INNER_HANDLE_WIDTH - MIN_INNER_PANE_WIDTH
 }
 
-function clampTreePaneWidth(panelWidth) {
-  const maxTree = maxTreePaneWidth(panelWidth - SIDEBAR_EDGE_WIDTH)
-  treePaneWidth.value = Math.min(treePaneWidth.value, Math.max(MIN_INNER_PANE_WIDTH, maxTree))
+function minUniversityPanelWidth() {
+  return Math.max(
+    MIN_UNIVERSITY_PANEL_WIDTH,
+    treePaneWidth.value + INNER_HANDLE_WIDTH + MIN_INNER_PANE_WIDTH + SIDEBAR_EDGE_WIDTH
+  )
 }
 
 function startInnerResize(event) {
@@ -611,7 +776,7 @@ function stopInnerResize() {
 }
 
 function minPanelWidth(side) {
-  return side === 'left' ? MIN_PANEL_WIDTH : MIN_UNIVERSITY_PANEL_WIDTH
+  return side === 'left' ? MIN_PANEL_WIDTH : minUniversityPanelWidth()
 }
 
 function maxPanelWidth(side) {
@@ -636,10 +801,7 @@ function handleResize(event) {
   const width = resizeStartWidth + direction * (event.clientX - resizeStartX)
   const nextWidth = Math.min(maxPanelWidth(resizingSide.value), Math.max(minPanelWidth(resizingSide.value), width))
   if (resizingSide.value === 'left') sidebarWidth.value = nextWidth
-  else {
-    universityPanelWidth.value = nextWidth
-    clampTreePaneWidth(nextWidth)
-  }
+  else universityPanelWidth.value = nextWidth
 }
 
 function stopResize() {
@@ -649,12 +811,9 @@ function stopResize() {
 
 function resetPanelWidth(side) {
   const defaultWidth = side === 'left' ? DEFAULT_PANEL_WIDTH : DEFAULT_UNIVERSITY_PANEL_WIDTH
-  const width = Math.min(defaultWidth, maxPanelWidth(side))
+  const width = Math.max(minPanelWidth(side), Math.min(defaultWidth, maxPanelWidth(side)))
   if (side === 'left') sidebarWidth.value = width
-  else {
-    universityPanelWidth.value = width
-    clampTreePaneWidth(width)
-  }
+  else universityPanelWidth.value = width
 }
 
 onMounted(async () => {
@@ -671,6 +830,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   clearHideTimer()
+  clearUniversityTreeHideTimer()
   window.removeEventListener('pointermove', handleResize)
   window.removeEventListener('pointerup', stopResize)
 })
@@ -792,6 +952,7 @@ onBeforeUnmount(() => {
 }
 
 .university-panel-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -812,13 +973,6 @@ onBeforeUnmount(() => {
   font-size: 16px;
   font-weight: 600;
   color: #303133;
-  word-break: break-all;
-}
-
-.university-detail-path {
-  font-size: 12px;
-  color: #909399;
-  line-height: 1.6;
   word-break: break-all;
 }
 
@@ -875,34 +1029,118 @@ onBeforeUnmount(() => {
   opacity: 0.35;
 }
 
+.inner-resize-handle.hidden {
+  display: none;
+}
+
 .university-tree-pane {
+  position: relative;
+  z-index: 20;
   flex: 0 0 auto;
   min-width: 120px;
   display: flex;
   flex-direction: column;
+  background: #fff;
+  transition: width 0.25s ease, min-width 0.25s ease, transform 0.25s ease;
+}
+
+.university-tree-pane.collapsed {
+  width: 0 !important;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.university-tree-pane.preview {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  box-shadow: -4px 0 18px rgba(0, 0, 0, 0.1);
 }
 
 .university-panel-header {
+  position: relative;
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
   min-height: 43px;
-  padding: 7px 10px 7px 12px;
+  padding: 7px 104px 7px 12px;
   border-bottom: 1px solid #e4e7ed;
 }
 
-.university-panel-title {
+.university-panel-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  color: #909399;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.university-panel-breadcrumb-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: 180px;
+  padding: 2px 4px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #606266;
+  font: inherit;
+  cursor: pointer;
+}
+
+.university-panel-breadcrumb-trigger > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.university-panel-breadcrumb-trigger:hover {
+  background: #f5f7fa;
+  color: #409eff;
+}
+
+.university-panel-breadcrumb-next {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid #dcdfe6;
+  border-radius: 50%;
+  background: #fff;
+  color: #909399;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.university-panel-breadcrumb-next:hover {
+  border-color: #409eff;
+  color: #409eff;
+  background: #ecf5ff;
+}
+
+.university-panel-breadcrumb-separator {
   flex-shrink: 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: #303133;
+  color: #c0c4cc;
 }
 
 .university-panel-actions {
+  position: absolute;
+  right: 10px;
+  top: 50%;
   display: flex;
   gap: 5px;
+  transform: translateY(-50%);
 }
 
 .university-panel-actions button {
@@ -994,6 +1232,52 @@ onBeforeUnmount(() => {
 .university-symbol {
   font-size: 15px;
   line-height: 1;
+}
+
+.university-tree-edge-handle {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 80;
+  width: var(--sidebar-edge-width);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #606266;
+}
+
+.university-tree-edge-pill {
+  width: var(--sidebar-edge-width);
+  height: 64px;
+  border: 1px solid #e4e7ed;
+  border-right: none;
+  border-radius: 10px 0 0 10px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.06);
+  transition: color 0.2s, background-color 0.2s;
+}
+
+.university-tree-edge-handle:hover .university-tree-edge-pill {
+  color: #409eff;
+  background: #ecf5ff;
+}
+
+.university-tree-edge-handle svg {
+  width: 15px;
+  height: 15px;
+  transition: transform 0.3s ease;
+}
+
+.university-tree-edge-handle.open svg {
+  transform: rotate(180deg);
 }
 
 .sidebar-edge-handle {

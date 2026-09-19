@@ -105,3 +105,20 @@ providers:
     streaming: true
     stop_anytime: true
     context_window: 128000        # 128K
+
+  qwen:
+    name: "qwen3.8-max"
+    display_name: "Qwen 3.8 Max"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode"
+    api_prefix: "/v1"
+    max_tokens: 4096
+    temperature: 0.7
+    api_key: "@format {env[DASHSCOPE_API_KEY]}"
+    supports_tools: true
+    deep_thinking: true
+    web_search: false
+    structured_output: true
+    multimodal: false
+    streaming: true
+    stop_anytime: true
+    context_window: 1000000       # 1M

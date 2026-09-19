@@ -27,6 +27,17 @@ def _utc_now() -> int:
     return int(time.time())
 
 
+def _normalize_tool_arguments(tool_name: str, arguments: str) -> str:
+    """确保历史工具调用参数符合 OpenAI 的 JSON 对象格式。"""
+    try:
+        parsed = json.loads(arguments)
+    except (json.JSONDecodeError, TypeError):
+        return arguments
+    if tool_name == "university_recall" and isinstance(parsed, list):
+        return json.dumps({"universities": parsed}, ensure_ascii=False)
+    return arguments
+
+
 def _format_title(ts: int) -> str:
     """根据时间戳生成标题，格式：对话 MM-DD HH:MM:SS（UTC+8）"""
     dt = datetime.fromtimestamp(ts, tz=UTC8)
@@ -402,7 +413,9 @@ class SessionManager:
                             "type": "function",
                             "function": {
                                 "name": tc["tool_name"],
-                                "arguments": tc["parameters"],
+                                "arguments": _normalize_tool_arguments(
+                                    tc["tool_name"], tc["parameters"]
+                                ),
                             },
                         }
                         for tc in tc_rows

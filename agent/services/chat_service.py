@@ -146,10 +146,12 @@ class ChatService:
 
             call_id = f"call_{uuid.uuid4().hex[:8]}"
             tool_parameters = json.dumps(
-                [
-                    {"name": uni_name, "queries": queries}
-                    for uni_name, queries in queries_by_uni.items()
-                ],
+                {
+                    "universities": [
+                        {"name": uni_name, "queries": queries}
+                        for uni_name, queries in queries_by_uni.items()
+                    ]
+                },
                 ensure_ascii=False,
             )
             from agent.services.retrieval import RetrievalService

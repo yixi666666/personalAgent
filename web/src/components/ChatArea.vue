@@ -31,66 +31,68 @@
         :data-key="msg.id"
       >
         <div class="message-body">
-          <div v-if="msg.isStreaming && chatStore.processingStage" class="processing-stage">
-            <span class="processing-dot"></span>
-            {{ chatStore.processingStage }}
-          </div>
-          <!-- 按 segments 顺序渲染 -->
-          <template v-for="(segment, sIdx) in msg.segments" :key="sIdx">
-            <!-- Reasoning segment: 深度思考折叠框，工具符号内联 -->
-            <div v-if="segment.type === 'reasoning'" class="reasoning-section">
-              <el-collapse v-model="segment.expanded">
-                <el-collapse-item name="1">
-                  <template #title>
-                    <span class="reasoning-title">💭 深度思考</span>
-                  </template>
-                  <div class="reasoning-flow">
-                    <template v-for="(part, pIdx) in segment.parts" :key="pIdx">
-                      <span v-if="part.type === 'text'" class="markdown-body" v-html="renderMarkdown(part.content)"></span>
-                      <el-popover
-                        v-else-if="part.type === 'tool_symbol'"
-                        trigger="click"
-                        :width="360"
-                        placement="top"
-                        @before-enter="onToolSymbolClick(msg, part)"
+          <!-- 折叠面板固定在助手正文之前 -->
+          <div v-if="msg.role === 'assistant'" class="reasoning-section">
+            <el-collapse
+              :model-value="getCollapseExpanded(msg)"
+              @update:model-value="setCollapseExpanded(msg, $event)"
+            >
+              <el-collapse-item name="1">
+                <template #title>
+                  <span class="reasoning-title">
+                    <span v-if="msg.isStreaming && chatStore.processingStage" class="processing-dot"></span>
+                    {{ msg.isStreaming && chatStore.processingStage
+                      ? chatStore.processingStage
+                      : `使用了 ${msg.collapsePanel.toolCount} 次工具` }}
+                  </span>
+                </template>
+                <div class="reasoning-flow">
+                  <div v-if="msg.collapsePanel.universities.length" class="message-universities">
+                    <template v-for="uni in msg.collapsePanel.universities" :key="uni.name">
+                      <button
+                        v-if="!uni.suspicious"
+                        class="uni-chip"
+                        type="button"
+                        :title="'查看 ' + uni.name"
+                        @click="selectUniversity(uni.name)"
                       >
-                        <template #reference>
-                          <span class="tool-symbol" :title="part.toolCall.function?.name || part.toolCall.id">🔧</span>
-                        </template>
-                        <div class="tool-popover-content">
-                          <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
-                          <div v-if="part.toolCall.result" class="tool-popover-row">
-                            <span class="tp-label">结果:</span>
-                            <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.result)"></div>
-                          </div>
-                          <div class="tool-popover-row">
-                            <span class="tp-label">参数:</span>
-                            <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.function?.arguments)"></div>
-                          </div>
-                        </div>
-                      </el-popover>
+                        {{ uni.name }}
+                      </button>
+                      <span v-else class="uni-chip suspicious" title="疑似高校">{{ uni.name }}</span>
                     </template>
                   </div>
-                </el-collapse-item>
-              </el-collapse>
-            </div>
-            <!-- Universities segment: 已识别高校名称，直接渲染在正文之前 -->
-            <div v-else-if="segment.type === 'universities'" class="message-universities">
-              <template v-for="uni in segment.universities" :key="uni.name">
-                <button
-                  v-if="!uni.suspicious"
-                  class="uni-chip"
-                  type="button"
-                  :title="'查看 ' + uni.name"
-                  @click="selectUniversity(uni.name)"
-                >
-                  {{ uni.name }}
-                </button>
-                <span v-else class="uni-chip suspicious" title="疑似高校">{{ uni.name }}</span>
-              </template>
-            </div>
-            <!-- Text segment: 正文气泡，工具符号内联 -->
-            <div v-else-if="segment.type === 'text'" class="message-content" :class="{ error: msg.isError }">
+                  <template v-for="(part, pIdx) in msg.collapsePanel.parts" :key="pIdx">
+                    <span v-if="part.type === 'text'" class="markdown-body" v-html="renderMarkdown(part.content)"></span>
+                    <el-popover
+                      v-else-if="part.type === 'tool_symbol'"
+                      trigger="click"
+                      :width="360"
+                      placement="top"
+                      @before-enter="onToolSymbolClick(msg, part)"
+                    >
+                      <template #reference>
+                        <span class="tool-symbol" :title="part.toolCall.function?.name || part.toolCall.id">🔧</span>
+                      </template>
+                      <div class="tool-popover-content">
+                        <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
+                        <div v-if="part.toolCall.result" class="tool-popover-row">
+                          <span class="tp-label">结果:</span>
+                          <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.result)"></div>
+                        </div>
+                        <div class="tool-popover-row">
+                          <span class="tp-label">参数:</span>
+                          <div class="tool-scroll-box" v-html="renderToolContent(part.toolCall.function?.arguments)"></div>
+                        </div>
+                      </div>
+                    </el-popover>
+                  </template>
+                </div>
+              </el-collapse-item>
+            </el-collapse>
+          </div>
+          <template v-for="(segment, sIdx) in msg.segments" :key="sIdx">
+            <!-- Text segment: 正文气泡，正文阶段工具符号内联 -->
+            <div v-if="segment.type === 'text'" class="message-content" :class="{ error: msg.isError }">
               <div class="content-flow">
                 <template v-for="(part, pIdx) in segment.parts" :key="pIdx">
                   <span v-if="part.type === 'text'" class="markdown-body" v-html="renderMarkdown(part.content)"></span>
@@ -351,6 +353,7 @@ const isUserAtBottom = ref(true)
 const todoExpanded = ref(['todo'])
 const copiedMessageId = ref(null)
 const messageFeedback = ref({})
+const collapseExpandedByMessage = ref({})
 const dotListVisible = ref(false)
 let copyResetTimer = null
 let dotHideTimer = null
@@ -392,90 +395,78 @@ watch(isDeepThinkModel, (val) => {
   if (!val) chatStore.deepThinking = false
 })
 
+function getCollapseExpanded(msg) {
+  const saved = collapseExpandedByMessage.value[msg.id]
+  if (saved !== undefined) return saved ? ['1'] : []
+  return (msg.isStreaming || msg._wasStreaming) ? ['1'] : []
+}
+
+function setCollapseExpanded(msg, value) {
+  collapseExpandedByMessage.value[msg.id] = value.includes('1')
+}
+
 /**
- * 将 blocks 数组转换为 segments 数组
- * 连续的 reasoning + tool_call 合并为一个 reasoning segment（工具符号内联）
- * tool_call + text 合并为一个 text segment（工具符号在文本前内联）
+ * 将消息块整理为固定在正文前的折叠面板和正文区域。
+ * 工具调用跟随最近的内容阶段；前置工具默认属于折叠面板。
  */
 const processedMessages = computed(() => {
   return messages.value.map(msg => {
-    if (!msg.blocks || msg.blocks.length === 0) return { ...msg, segments: [] }
-
-    // 先按类型分组：所有 reasoning → 一个 segment，所有 text → 一个 segment
-    // tool_call 内联到它前一个块所属的 segment
-    const segments = []
-    let reasoningSegment = null
-    let textSegment = null
-    let lastType = null // 上一个非 tool_call 块的类型
-    // 已识别高校名称（query_understanding 直接渲染，不显示工具符号）
-    const universities = []
+    const collapsePanel = {
+      parts: [],
+      universities: [],
+      toolCount: 0,
+    }
+    const textSegment = { type: 'text', parts: [] }
     const seenUniversity = new Set()
+    let lastType = null
 
-    for (const block of msg.blocks) {
+    for (const block of msg.blocks || []) {
       if (block.type === 'reasoning') {
-        if (!reasoningSegment) {
-          reasoningSegment = { type: 'reasoning', parts: [], expanded: (msg.isStreaming || msg._wasStreaming) ? ['1'] : [] }
-          segments.push(reasoningSegment)
-        }
         if (block.content) {
-          reasoningSegment.parts.push({ type: 'text', content: block.content })
+          collapsePanel.parts.push({ type: 'text', content: block.content })
         }
         lastType = 'reasoning'
       } else if (block.type === 'text') {
-        if (!textSegment) {
-          textSegment = { type: 'text', parts: [] }
-          segments.push(textSegment)
-        }
         if (block.content) {
           textSegment.parts.push({ type: 'text', content: block.content })
         }
         lastType = 'text'
       } else if (block.type === 'tool_call') {
-        // query_understanding：不显示工具符号，直接提取高校名称渲染
+        // 高校识别结果固定放在折叠面板顶部，不显示为工具符号。
         if (block.toolCall?.function?.name === 'query_understanding') {
+          collapsePanel.toolCount++
           const uniData = parseUniversityResult(block.toolCall.result)
           for (const uni of uniData?.confirmed || []) {
             if (uni.name && !seenUniversity.has(uni.name)) {
               seenUniversity.add(uni.name)
-              universities.push({ name: uni.name, suspicious: false })
+              collapsePanel.universities.push({ name: uni.name, suspicious: false })
             }
           }
           for (const uni of uniData?.suspicious || []) {
             if (uni.name && !seenUniversity.has(uni.name)) {
               seenUniversity.add(uni.name)
-              universities.push({ name: uni.name, suspicious: true })
+              collapsePanel.universities.push({ name: uni.name, suspicious: true })
             }
           }
           continue
         }
-        // tool_call 内联到前一个块所属的 segment
-        let target = lastType === 'reasoning' ? reasoningSegment
-          : lastType === 'text' ? textSegment
-          : null
-        // 如果前面没有 segment，创建一个 text segment 来挂载工具符号
-        if (!target) {
-          if (!textSegment) {
-            textSegment = { type: 'text', parts: [] }
-            segments.push(textSegment)
-          }
-          target = textSegment
+
+        const toolPart = {
+          type: 'tool_symbol',
+          toolCall: block.toolCall,
+          _messageId: block._messageId,
         }
-        target.parts.push({ type: 'tool_symbol', toolCall: block.toolCall, _messageId: block._messageId })
+        if (lastType === 'text') {
+          textSegment.parts.push(toolPart)
+        } else {
+          collapsePanel.parts.push(toolPart)
+          collapsePanel.toolCount++
+        }
       }
     }
 
-    // 高校名称放在正文之前
-    if (universities.length > 0) {
-      const universitySegment = { type: 'universities', universities }
-      const textIndex = segments.findIndex(s => s.type === 'text')
-      if (textIndex === -1) {
-        segments.push(universitySegment)
-      } else {
-        segments.splice(textIndex, 0, universitySegment)
-      }
-    }
-
-    return { ...msg, segments }
+    const segments = textSegment.parts.length > 0 ? [textSegment] : []
+    return { ...msg, collapsePanel, segments }
   })
 })
 
@@ -1014,10 +1005,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
   line-height: 1.5;
   color: #6b7280;
-  background: #f9fafb;
-  padding: 8px 12px;
-  border-radius: 6px;
-  border-left: 3px solid #8b5cf6;
+  padding: 4px 0 8px;
 }
 
 .flow-text {
@@ -1158,6 +1146,38 @@ onBeforeUnmount(() => {
   margin-bottom: 4px;
 }
 
+.reasoning-section :deep(.el-collapse) {
+  border: none;
+}
+
+.reasoning-section :deep(.el-collapse-item__header) {
+  justify-content: flex-start;
+  height: 34px;
+  line-height: 34px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.reasoning-section :deep(.el-collapse-item__title) {
+  flex: 0 0 auto;
+}
+
+.reasoning-section :deep(.el-collapse-item__arrow) {
+  flex: 0 0 auto;
+  margin: 0 0 0 6px;
+  color: #909399;
+}
+
+.reasoning-section :deep(.el-collapse-item__wrap) {
+  border: none;
+  background: transparent;
+}
+
+.reasoning-section :deep(.el-collapse-item__content) {
+  padding: 0;
+}
+
 /* Todo 面板 */
 .todo-panel-wrapper {
   flex-shrink: 0;
@@ -1247,9 +1267,12 @@ onBeforeUnmount(() => {
 }
 
 .reasoning-title {
-  font-size: 13px;
-  color: #8b5cf6;
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: #909399;
+  font-weight: 400;
 }
 
 /* Markdown 渲染样式 */

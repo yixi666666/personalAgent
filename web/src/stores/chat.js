@@ -360,15 +360,7 @@ export const useChatStore = defineStore('chat', () => {
           if (chunk.tool_results && pendingStreamToolCalls) {
             for (const tr of chunk.tool_results) {
               const tc = pendingStreamToolCalls.find(c => c.id === tr.id)
-              if (tc) {
-                tc.result = tr.result
-                tc.status = tr.status
-                // 固定：高校识别完成后进入召回
-                if (tc.function?.name === 'query_understanding') {
-                  enterStage(2, '召回中...')
-                }
-              }
-              // 同步更新 blocks 中的 toolCall 引用
+              // 必须通过 blocks 中的响应式代理回填，确保结果立即触发界面更新
               for (const b of blocks) {
                 if (b.type === 'tool_call' && b.toolCall.id === tr.id) {
                   b.toolCall.result = tr.result
@@ -379,6 +371,10 @@ export const useChatStore = defineStore('chat', () => {
                     b.todoData.status = tr.status
                   }
                 }
+              }
+              // 高校识别结果已完成并渲染后进入召回
+              if (tc?.function?.name === 'query_understanding') {
+                enterStage(2, '召回中...')
               }
             }
           }

@@ -149,7 +149,7 @@ class RecallAgentService:
         """将之前各轮召回的 fact 伪装成 assistant tool_call + tool result 消息对
 
         每轮一条 tool_call，arguments 格式:
-          [{"name": "湖南工业大学", "queries": ["..."]}, ...]
+          {"universities": [{"name": "湖南工业大学", "queries": ["..."]}, ...]}
         tool result 格式:
           {"universities": [{"name": "...", "facts": [...]}], "target_universities": [...]}
         """
@@ -163,7 +163,9 @@ class RecallAgentService:
                 {"name": uni_name, "queries": queries}
                 for uni_name, queries in queries_by_uni.items()
             ]
-            tool_arguments = json.dumps(universities_args, ensure_ascii=False)
+            tool_arguments = json.dumps(
+                {"universities": universities_args}, ensure_ascii=False
+            )
             messages.append({
                 "role": "assistant",
                 "content": None,
