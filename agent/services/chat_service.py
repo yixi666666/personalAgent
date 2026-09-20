@@ -34,19 +34,21 @@ class ChatService:
 
     async def prepare_session(
         self, session_id: Optional[str], prompt: str, model: str
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, Optional[dict]]:
         """准备会话：创建或获取会话，保存用户消息
 
         前置步骤（高校识别 + Fact 召回）已移至 stream_chat 中执行，
         以便通过 SSE 实时推送 tool_call 事件给前端。
 
-        返回: (session_id, user_msg_id)
+        返回: (session_id, user_msg_id, created_session)
+              created_session 仅在本次新建会话时非空，供前端局部插入会话列表
         """
         session_manager = get_session_manager()
 
+        created_session = None
         if not session_id:
-            session = session_manager.create_session()
-            session_id = session["id"]
+            created_session = session_manager.create_session(prompt)
+            session_id = created_session["id"]
 
         if not session_manager.session_exists(session_id):
             raise ValueError(f"会话不存在: {session_id}")
@@ -59,7 +61,7 @@ class ChatService:
             parent_id=parent_id,
         )
 
-        return session_id, user_msg.id
+        return session_id, user_msg.id, created_session
 
     async def _run_pre_retrieval(
         self, session_id: str, user_query: str, user_msg_id: str,

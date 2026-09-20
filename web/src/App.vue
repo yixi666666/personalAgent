@@ -13,7 +13,11 @@
       @mouseenter="handleSidebarEnter"
       @mouseleave="handleSidebarLeave"
     >
-      <SessionList />
+      <SessionList
+        @open-search="openSearchPanel"
+        @open-settings="settingsVisible = true"
+        @open-inbox="openInbox"
+      />
       <div
         class="panel-resize-handle left-resize-handle"
         :class="{ dragging: resizingSide === 'left' }"
@@ -220,6 +224,66 @@
         </svg>
       </span>
     </button>
+
+    <el-dialog
+      v-model="searchVisible"
+      class="search-dialog"
+      width="min(57vw, 700px)"
+      top="10vh"
+      :show-close="false"
+      @opened="focusSearchInput"
+    >
+      <div class="search-bar">
+        <svg class="search-bar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-4-4" />
+        </svg>
+        <input
+          ref="searchInputRef"
+          v-model="searchKeyword"
+          type="search"
+          placeholder="搜索对话内容..."
+          aria-label="搜索对话内容"
+        />
+        <button type="button" aria-label="关闭搜索" @click="searchVisible = false">×</button>
+      </div>
+    </el-dialog>
+
+    <el-dialog v-model="settingsVisible" class="settings-dialog" title="设置" width="600px" align-center>
+      <div class="settings-list">
+        <button class="settings-item" type="button">
+          <span>
+            <strong>个人信息</strong>
+            <small>修改头像、昵称和个人资料</small>
+          </span>
+          <span class="settings-arrow">›</span>
+        </button>
+        <button class="settings-item" type="button">
+          <span>
+            <strong>主题</strong>
+            <small>切换浅色、深色或跟随系统</small>
+          </span>
+          <span class="settings-arrow">›</span>
+        </button>
+      </div>
+    </el-dialog>
+
+    <el-dialog v-model="inboxVisible" class="inbox-dialog" title="邮箱" width="600px" align-center @closed="selectedMail = null">
+      <button v-if="!selectedMail" class="mail-item" type="button" @click="selectedMail = demoMail">
+        <span class="mail-unread-dot"></span>
+        <span class="mail-summary">
+          <strong>{{ demoMail.title }}</strong>
+          <small>{{ demoMail.preview }}</small>
+        </span>
+        <time>{{ demoMail.time }}</time>
+      </button>
+      <article v-else class="mail-detail">
+        <button class="mail-back" type="button" @click="selectedMail = null">‹ 返回邮箱</button>
+        <h3>{{ selectedMail.title }}</h3>
+        <div class="mail-meta">来自：{{ selectedMail.sender }} · {{ selectedMail.time }}</div>
+        <p>{{ selectedMail.content }}</p>
+      </article>
+    </el-dialog>
   </div>
 </template>
 
@@ -231,6 +295,19 @@ import { useChatStore } from './stores/chat'
 import { getUniversity } from './api'
 
 const chatStore = useChatStore()
+const searchVisible = ref(false)
+const searchKeyword = ref('')
+const searchInputRef = ref(null)
+const settingsVisible = ref(false)
+const inboxVisible = ref(false)
+const selectedMail = ref(null)
+const demoMail = {
+  title: '我发送的更新详情',
+  preview: '查看本次个人信息与偏好设置的更新内容',
+  sender: '小忆',
+  time: '刚刚',
+  content: '你的更新请求已经记录。这里将展示个人信息、主题偏好等设置的更新详情。',
+}
 const sidebarCollapsed = ref(false)
 const sidebarPreview = ref(false)
 const edgeHovered = ref(false)
@@ -516,6 +593,8 @@ const breadcrumbLevels = computed(() => {
 })
 const lastClickedNodeKey = ref(null)
 let universityDetailSeq = 0
+const universityDetailCache = new Map()
+const universityDetailInflight = new Map()
 
 const CATEGORY_TEXT = { ordinary: '普通高校', adult: '成人高校' }
 
@@ -539,13 +618,31 @@ const universityInfoRows = computed(() => {
  */
 async function loadUniversityDetail(name) {
   const seq = ++universityDetailSeq
+  if (!name) {
+    universityDetail.value = null
+    return
+  }
+
+  const cached = universityDetailCache.get(name)
+  if (cached) {
+    universityDetail.value = cached
+    return
+  }
+
   universityDetail.value = null
-  if (!name) return
   try {
-    const data = await getUniversity(name)
+    let request = universityDetailInflight.get(name)
+    if (!request) {
+      request = getUniversity(name)
+      universityDetailInflight.set(name, request)
+    }
+    const data = await request
+    universityDetailCache.set(name, data)
     if (seq === universityDetailSeq) universityDetail.value = data
   } catch (err) {
     console.error('加载高校信息失败:', err)
+  } finally {
+    universityDetailInflight.delete(name)
   }
 }
 
@@ -711,6 +808,19 @@ function toggleUniversityTree() {
   universityTreeCollapsed.value = !universityTreeCollapsed.value
   universityTreePreview.value = false
   if (universityTreeCollapsed.value) universityTreePreviewBlockedUntil = Date.now() + 500
+}
+
+function openSearchPanel() {
+  searchVisible.value = true
+}
+
+function focusSearchInput() {
+  searchInputRef.value?.focus()
+}
+
+function openInbox() {
+  selectedMail.value = null
+  inboxVisible.value = true
 }
 
 function toggleUniversityPanel() {
@@ -1324,6 +1434,206 @@ onBeforeUnmount(() => {
 
 .sidebar-edge-handle.open svg {
   transform: rotate(180deg);
+}
+
+:deep(.search-dialog) {
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.16);
+}
+
+:deep(.search-dialog .el-dialog__header) {
+  display: none;
+}
+
+:deep(.search-dialog .el-dialog__body) {
+  padding: 0;
+}
+
+.search-bar {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 8px;
+  height: 25px;
+  padding: 0 8px 0 14px;
+  background: #fff;
+}
+
+.search-bar-icon {
+  width: 20px;
+  height: 20px;
+  color: #303133;
+}
+
+.search-bar input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #303133;
+  font: inherit;
+  font-size: 15px;
+}
+
+.search-bar input::placeholder {
+  color: #909399;
+}
+
+.search-bar input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.search-bar button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #909399;
+  font-size: 26px;
+  font-weight: 300;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.search-bar button:hover {
+  background: #f5f7fa;
+  color: #606266;
+}
+
+:deep(.settings-dialog),
+:deep(.inbox-dialog) {
+  height: 620px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+:deep(.settings-dialog .el-dialog__header),
+:deep(.inbox-dialog .el-dialog__header) {
+  flex-shrink: 0;
+}
+
+:deep(.settings-dialog .el-dialog__body),
+:deep(.inbox-dialog .el-dialog__body) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.settings-list {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 16px;
+  border: 1px solid #e4e7ed;
+  border-radius: 10px;
+  background: #fff;
+  color: #303133;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-item:hover {
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+
+.settings-item > span:first-child {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-item strong,
+.mail-summary strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-item small,
+.mail-summary small {
+  color: #909399;
+  font-size: 12px;
+}
+
+.settings-arrow {
+  color: #909399;
+  font-size: 24px;
+}
+
+.mail-item {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 16px;
+  border: 1px solid #e4e7ed;
+  border-radius: 10px;
+  background: #fff;
+  color: #303133;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mail-item:hover {
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+
+.mail-unread-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #409eff;
+}
+
+.mail-summary {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mail-item time,
+.mail-meta {
+  color: #909399;
+  font-size: 12px;
+}
+
+.mail-back {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #409eff;
+  cursor: pointer;
+}
+
+.mail-detail h3 {
+  margin: 18px 0 8px;
+  font-size: 18px;
+}
+
+.mail-detail p {
+  margin: 20px 0 0;
+  color: #606266;
+  line-height: 1.8;
+}
+
+@media (max-width: 640px) {
+  :deep(.el-dialog) {
+    width: calc(100% - 32px) !important;
+  }
 }
 
 </style>

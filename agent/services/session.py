@@ -44,6 +44,21 @@ def _format_title(ts: int) -> str:
     return f"对话 {dt.strftime('%m-%d %H:%M:%S')}"
 
 
+# 会话标题取自首条用户消息的前 N 个字符
+TITLE_MAX_CHARS = 15
+
+
+def _build_title(prompt: str, ts: int) -> str:
+    """用首条用户消息生成会话标题：压缩空白后取前 15 个字符
+
+    prompt 为空或纯空白时回退到时间戳标题
+    """
+    text = " ".join((prompt or "").split())
+    if not text:
+        return _format_title(ts)
+    return text[:TITLE_MAX_CHARS]
+
+
 def _format_display_time(ts: Optional[int]) -> Optional[str]:
     """将 UTC 时间戳转为 UTC+8 可读字符串，用于前端展示
 
@@ -56,10 +71,11 @@ def _format_display_time(ts: Optional[int]) -> Optional[str]:
 
 
 class SessionManager:
-    def create_session(self) -> dict:
+    def create_session(self, prompt: str = "") -> dict:
+        """创建会话，标题取自首条用户消息 prompt 的前 15 个字符"""
         session_id = str(uuid.uuid4())
         now = _utc_now()
-        title = _format_title(now)
+        title = _build_title(prompt, now)
         db = get_db()
         db.execute(
             "INSERT INTO sessions (id, title, status, created_time, updated_time) VALUES (?, ?, ?, ?, ?)",
@@ -312,7 +328,7 @@ class SessionManager:
         )
 
     def list_sessions(
-        self, limit: int = 20, offset: int = 0
+        self, limit: int = 30, offset: int = 0
     ) -> dict:
         db = get_db()
         total_row = db.execute(

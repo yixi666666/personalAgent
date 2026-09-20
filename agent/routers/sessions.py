@@ -11,7 +11,7 @@ router = APIRouter()
 
 @router.get("/sessions", response_model=SessionListResponse)
 def list_sessions(
-    limit: int = Query(default=20, description="分页大小"),
+    limit: int = Query(default=30, description="分页大小"),
     offset: int = Query(default=0, description="偏移量"),
 ):
     session_manager = get_session_manager()

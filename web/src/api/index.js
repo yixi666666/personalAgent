@@ -61,7 +61,7 @@ export async function chatCompletionsStream(prompt, sessionId = '', model = 'glm
   }
 }
 
-export async function listSessions(limit = 20, offset = 0) {
+export async function listSessions(limit = 30, offset = 0) {
   const { data } = await api.get('/sessions', { params: { limit, offset } })
   return data
 }

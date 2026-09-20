@@ -19,7 +19,7 @@ async def _stream_chat_generator(request: ChatRequest):
     model = request.model
 
     try:
-        session_id, user_msg_id = await chat_service.prepare_session(
+        session_id, user_msg_id, created_session = await chat_service.prepare_session(
             session_id=request.session_id,
             prompt=request.prompt,
             model=model,
@@ -28,7 +28,11 @@ async def _stream_chat_generator(request: ChatRequest):
         yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
         return
 
-    yield f"data: {json.dumps({'session_id': session_id}, ensure_ascii=False)}\n\n"
+    # 新建会话时一并回传标题等信息，前端据此局部插入会话列表，无需重拉整页
+    first_event = {"session_id": session_id}
+    if created_session:
+        first_event["session"] = created_session
+    yield f"data: {json.dumps(first_event, ensure_ascii=False)}\n\n"
 
     async for event in chat_service.stream_chat(
         session_id=session_id,

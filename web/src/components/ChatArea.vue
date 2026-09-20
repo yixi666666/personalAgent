@@ -207,18 +207,30 @@
                 </svg>
               </button>
             </template>
-            <button
+            <el-popconfirm
               v-else
-              class="message-action-btn"
-              type="button"
-              title="回退"
-              aria-label="回退"
+              title="确认回退吗？之后的消息将消失不可见"
+              confirm-button-text="确认"
+              cancel-button-text="取消"
+              placement="bottom-end"
+              :offset="6"
+              popper-class="rollback-popconfirm"
+              width="320"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M9 14 4 9l5-5" />
-                <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />
-              </svg>
-            </button>
+              <template #reference>
+                <button
+                  class="message-action-btn"
+                  type="button"
+                  title="回退"
+                  aria-label="回退"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M9 14 4 9l5-5" />
+                    <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />
+                  </svg>
+                </button>
+              </template>
+            </el-popconfirm>
           </div>
         </div>
       </div>
@@ -1013,6 +1025,25 @@ onBeforeUnmount(() => {
 
 .message-item.user .message-actions {
   justify-content: flex-end;
+}
+
+:global(.rollback-popconfirm) {
+  --el-bg-color-overlay: #f2f3f5;
+  background: #f2f3f5 !important;
+  border-color: #dcdfe6 !important;
+}
+
+:global(.rollback-popconfirm .el-popconfirm__main) {
+  white-space: nowrap;
+}
+
+:global(.rollback-popconfirm .el-popconfirm__action) {
+  margin-top: 4px;
+}
+
+:global(.rollback-popconfirm .el-popper__arrow::before) {
+  background: #f2f3f5 !important;
+  border-color: #dcdfe6 !important;
 }
 
 .message-action-btn {

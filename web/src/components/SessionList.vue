@@ -4,10 +4,10 @@
       <div class="sidebar-brand">
         <span class="sidebar-brand-name">小忆</span>
         <div class="sidebar-brand-actions">
-          <button class="header-icon-btn" type="button" title="收件箱" aria-label="收件箱">
+          <button class="header-icon-btn" type="button" title="收件箱" aria-label="收件箱" @click="emit('open-inbox')">
             <el-icon><Message /></el-icon>
           </button>
-          <button class="header-icon-btn" type="button" title="搜索会话" aria-label="搜索会话">
+          <button class="header-icon-btn" type="button" title="搜索会话" aria-label="搜索会话" @click="emit('open-search')">
             <el-icon><Search /></el-icon>
           </button>
         </div>
@@ -18,7 +18,7 @@
       </el-button>
     </div>
 
-    <div class="session-list scrollable">
+    <div ref="listRef" class="session-list scrollable" @scroll="handleScroll">
       <div class="session-group-label">置顶</div>
       <div
         v-for="p in pinnedSessions"
@@ -86,15 +86,28 @@
           </el-dropdown>
         </div>
       </template>
+      <div v-if="chatStore.sessionsLoading" class="session-list-status">加载中...</div>
+      <div
+        v-else-if="chatStore.sessions.length > 0 && !chatStore.sessionsHasMore"
+        class="session-list-status"
+      >没有更多了</div>
       <el-empty v-if="chatStore.sessions.length === 0" description="暂无会话" :image-size="60" />
     </div>
 
-    <div class="sidebar-footer">
+    <div
+      class="sidebar-footer"
+      role="button"
+      tabindex="0"
+      aria-label="打开设置"
+      @click="emit('open-settings')"
+      @keydown.enter="emit('open-settings')"
+      @keydown.space.prevent="emit('open-settings')"
+    >
       <div class="user-profile">
         <el-avatar :size="36" style="background: #409eff">忆</el-avatar>
         <span class="user-nickname">忆昔</span>
       </div>
-      <button class="settings-btn" type="button" title="设置" aria-label="设置">
+      <button class="settings-btn" type="button" title="设置" aria-label="设置" tabindex="-1">
         <el-icon><Setting /></el-icon>
       </button>
     </div>
@@ -102,11 +115,35 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled, Setting, Search, Message } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 
+const emit = defineEmits(['open-inbox', 'open-search', 'open-settings'])
 const chatStore = useChatStore()
+
+const listRef = ref(null)
+// 距底部多少像素时触发加载下一页
+const LOAD_MORE_THRESHOLD = 60
+
+function handleScroll(event) {
+  const el = event.target
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - LOAD_MORE_THRESHOLD) {
+    chatStore.loadMoreSessions()
+  }
+}
+
+// 首屏内容不足以撑出滚动条时（大屏 + 会话较多），滚动事件永远不会触发，
+// 这里主动续页直到出现滚动条或没有更多数据
+async function fillViewport() {
+  await nextTick()
+  const el = listRef.value
+  if (!el) return
+  if (el.scrollHeight <= el.clientHeight + 1) chatStore.loadMoreSessions()
+}
+
+onMounted(fillViewport)
+watch(() => chatStore.sessions.length, fillViewport)
 
 // 置顶会话：当前为前端写死的占位数据，后续接入后端后替换
 const pinnedSessions = [
@@ -228,6 +265,13 @@ function handlePinnedCommand() {}
   padding: 0 8px;
 }
 
+.session-list-status {
+  padding: 10px 12px 14px;
+  font-size: 11px;
+  color: #909399;
+  text-align: center;
+}
+
 .session-item {
   position: relative;
   display: flex;
@@ -332,6 +376,13 @@ function handlePinnedCommand() {}
   justify-content: space-between;
   padding: 8px 16px;
   border-top: 1px solid #e4e7ed;
+  cursor: pointer;
+}
+
+.sidebar-footer:hover,
+.sidebar-footer:focus-visible {
+  background: #e8eaed;
+  outline: none;
 }
 
 .settings-btn {

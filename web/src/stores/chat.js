@@ -3,7 +3,14 @@ import { ref, computed } from 'vue'
 import { chatCompletionsStream, listSessions, getSession, deleteSession, listModels, listTools, getToolCalls } from '../api'
 
 export const useChatStore = defineStore('chat', () => {
+  // 会话列表滑动分页：每页条数
+  const SESSION_PAGE_SIZE = 30
+
   const sessions = ref([])
+  const sessionsTotal = ref(0)
+  // 已向后端请求到的位置，作为下一页的 offset
+  const sessionsOffset = ref(0)
+  const sessionsLoading = ref(false)
   const currentSessionId = ref(null)
   const messages = ref([])
   const loading = ref(false)
@@ -17,6 +24,8 @@ export const useChatStore = defineStore('chat', () => {
   const selectedUniversity = ref(null)
   const universitySelectSeq = ref(0)
   const processingStage = ref('')
+
+  const sessionsHasMore = computed(() => sessionsOffset.value < sessionsTotal.value)
 
   const currentSession = computed(() => {
     return sessions.value.find(s => s.id === currentSessionId.value) || null
@@ -70,15 +79,107 @@ export const useChatStore = defineStore('chat', () => {
     return null
   })
 
+  function normalizeSession(s) {
+    return {
+      ...s,
+      display_time: s.updated_time || s.created_time || '',
+    }
+  }
+
+  /** 重置并加载第一页会话（首屏使用） */
   async function loadSessionsData() {
+    if (sessionsLoading.value) return
+    sessionsLoading.value = true
     try {
-      const data = await listSessions()
-      sessions.value = (data.sessions || []).map(s => ({
-        ...s,
-        display_time: s.updated_time || s.created_time || '',
-      }))
+      const data = await listSessions(SESSION_PAGE_SIZE, 0)
+      sessions.value = (data.sessions || []).map(normalizeSession)
+      sessionsTotal.value = data.total || 0
+      sessionsOffset.value = (data.sessions || []).length
     } catch (err) {
       console.error('加载会话列表失败:', err)
+    } finally {
+      sessionsLoading.value = false
+    }
+  }
+
+  /** 滑动到底部时加载下一页，追加并按 id 去重 */
+  async function loadMoreSessions() {
+    if (sessionsLoading.value || !sessionsHasMore.value) return
+    sessionsLoading.value = true
+    try {
+      const data = await listSessions(SESSION_PAGE_SIZE, sessionsOffset.value)
+      const rows = data.sessions || []
+      const seen = new Set(sessions.value.map(s => s.id))
+      sessions.value = sessions.value.concat(
+        rows.map(normalizeSession).filter(s => !seen.has(s.id))
+      )
+      sessionsTotal.value = data.total ?? sessionsTotal.value
+      // offset 按后端实际返回的条数推进，保证与后端分页窗口对齐
+      sessionsOffset.value += rows.length
+    } catch (err) {
+      console.error('加载更多会话失败:', err)
+    } finally {
+      sessionsLoading.value = false
+    }
+  }
+
+  /**
+   * 新建会话后局部插入列表顶部，避免重拉整页导致滚动位置丢失
+   * 新会话在后端排序中位于第 0 位，原有行整体后移一位，故 offset/total 同步 +1
+   */
+  function insertCreatedSession(session) {
+    if (!session?.id) return
+    if (sessions.value.some(s => s.id === session.id)) return
+    sessions.value.unshift(normalizeSession(session))
+    sessionsTotal.value += 1
+    sessionsOffset.value += 1
+  }
+
+  /** 本地当前时间，格式与后端 display 时间一致：'YYYY-MM-DD HH:MM' */
+  function formatLocalDisplayTime(date = new Date()) {
+    const pad = n => String(n).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+      `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  }
+
+  /** 一轮对话结束后局部更新当前会话的时间并移到列表顶部 */
+  function touchCurrentSession() {
+    const sid = currentSessionId.value
+    if (!sid) return
+    const idx = sessions.value.findIndex(s => s.id === sid)
+    if (idx === -1) return
+    const now = formatLocalDisplayTime()
+    const target = sessions.value[idx]
+    target.updated_time = now
+    target.display_time = now
+    if (idx > 0) {
+      sessions.value.splice(idx, 1)
+      sessions.value.unshift(target)
+    }
+  }
+
+  /**
+   * 用会话详情接口返回的数据回填列表项
+   * 打开不在已加载分页窗口内的老会话时补插一条，避免标题退化成「会话 {id前8位}」
+   */
+  function syncSessionFromDetail(detail) {
+    if (!detail?.id) return
+    const item = {
+      id: detail.id,
+      title: detail.title,
+      status: detail.status,
+      created_time: detail.created_time,
+      updated_time: detail.updated_time,
+      display_time: detail.updated_time || detail.created_time || '',
+    }
+    const idx = sessions.value.findIndex(s => s.id === detail.id)
+    if (idx === -1) {
+      // 该会话后端已计入 total，只是不在当前窗口，不动 offset/total；
+      // 后续翻页若再次取到，由 loadMoreSessions 的去重逻辑跳过
+      sessions.value.push({ ...item, message_count: 0 })
+    } else {
+      const old = sessions.value[idx]
+      sessions.value[idx] = { ...old, ...item }
     }
   }
 
@@ -131,6 +232,7 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const data = await getSession(sessionId)
       currentSessionId.value = sessionId
+      syncSessionFromDetail(data)
       const rawMessages = data.messages || []
       const processed = []
       let pendingBlocks = []
@@ -185,7 +287,13 @@ export const useChatStore = defineStore('chat', () => {
   async function removeSession(sessionId) {
     try {
       await deleteSession(sessionId)
+      const removedIdx = sessions.value.findIndex(s => s.id === sessionId)
       sessions.value = sessions.value.filter(s => s.id !== sessionId)
+      sessionsTotal.value = Math.max(0, sessionsTotal.value - 1)
+      // 删除的是已加载窗口内的会话时，后端该行位置释放，offset 回退一位
+      if (removedIdx !== -1 && removedIdx < sessionsOffset.value) {
+        sessionsOffset.value -= 1
+      }
       if (currentSessionId.value === sessionId) {
         currentSessionId.value = null
         messages.value = []
@@ -288,7 +396,8 @@ export const useChatStore = defineStore('chat', () => {
           if (chunk.session_id) {
             if (!currentSessionId.value) {
               currentSessionId.value = chunk.session_id
-              loadSessionsData()
+              // 局部插入新会话，不重拉列表，保留已加载的分页与滚动位置
+              insertCreatedSession(chunk.session)
             }
             // 固定：会话建立后进入高校识别
             enterStage(1, '高校识别...')
@@ -388,7 +497,8 @@ export const useChatStore = defineStore('chat', () => {
           messages.value[assistantIdx]._wasStreaming = true
           streamingContent.value = ''
           streamingReasoning.value = ''
-          loadSessionsData()
+          // 局部更新当前会话时间并置顶，不重拉列表
+          touchCurrentSession()
         },
         (error) => {
           streaming.value = false
@@ -480,6 +590,10 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     sessions,
+    sessionsTotal,
+    sessionsOffset,
+    sessionsLoading,
+    sessionsHasMore,
     currentSessionId,
     messages,
     loading,
@@ -497,6 +611,7 @@ export const useChatStore = defineStore('chat', () => {
     universitySelectSeq,
     processingStage,
     loadSessions: loadSessionsData,
+    loadMoreSessions,
     loadSession: loadSessionData,
     removeSession,
     newSession,
