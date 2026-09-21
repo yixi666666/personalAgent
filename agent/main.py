@@ -8,6 +8,7 @@ from agent.routers import chat, sessions, models, universities
 from agent.services.tool_manager import get_tool_manager
 from agent.services.skill_manager import get_skill_manager
 from agent.services.llm_client import get_llm_client
+from agent.services.stream_bus import get_stream_bus
 
 
 class FixedWidthFormatter(logging.Formatter):
@@ -75,6 +76,7 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("正在关闭服务...")
+    await get_stream_bus().shutdown()
     tool_manager.stop_refresh_task()
     skill_manager.stop_refresh_task()
     await skill_manager.close()

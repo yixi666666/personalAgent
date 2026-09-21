@@ -55,10 +55,11 @@
               <el-collapse-item name="1">
                 <template #title>
                   <span class="reasoning-title">
-                    <span v-if="msg.isStreaming && chatStore.processingStage" class="processing-dot"></span>
-                    {{ msg.isStreaming && chatStore.processingStage
-                      ? chatStore.processingStage
-                      : `使用了 ${msg.collapsePanel.toolCount} 次工具` }}
+                    <span v-if="msg.isStreaming" class="processing-dot"></span>
+                    <span v-if="msg.isStreaming" class="streaming-stage-text">
+                      {{ chatStore.processingStage }}
+                    </span>
+                    <span v-else>使用了 {{ msg.collapsePanel.toolCount }} 次工具</span>
                   </span>
                 </template>
                 <div class="reasoning-flow">
@@ -1318,7 +1319,10 @@ onBeforeUnmount(() => {
 /* Todo 面板 */
 .todo-panel-wrapper {
   flex-shrink: 0;
-  border-top: 1px solid #e4e7ed;
+  margin: 0 92px 0 48px;
+  box-sizing: border-box;
+  border: 1px solid #e4e7ed;
+  border-radius: 12px;
   background: #f9fafb;
   max-height: 240px;
   overflow-y: auto;

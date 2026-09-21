@@ -1,6 +1,19 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { chatCompletionsStream, listSessions, getSession, deleteSession, listModels, listTools, getToolCalls } from '../api'
+import {
+  attachChatStream,
+  chatCompletionsStream,
+  deleteSession,
+  getActiveStream,
+  getSession,
+  getToolCalls,
+  listModels,
+  listSessions,
+  listTools,
+} from '../api'
+
+let activeStreamHandle = null
+let streamGeneration = 0
 
 export const useChatStore = defineStore('chat', () => {
   // 会话列表滑动分页：每页条数
@@ -279,6 +292,7 @@ export const useChatStore = defineStore('chat', () => {
 
       messages.value = processed
       localStorage.setItem('currentSessionId', sessionId)
+      await tryResumeActiveStream(sessionId)
     } catch (err) {
       console.error('加载会话失败:', err)
     }
@@ -304,35 +318,26 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function newSession() {
-    currentSessionId.value = null
-    messages.value = []
-    localStorage.removeItem('currentSessionId')
+  function abortActiveStream() {
+    streamGeneration += 1
+    activeStreamHandle?.abort()
+    activeStreamHandle = null
   }
 
-  function selectSession(sessionId) {
-    currentSessionId.value = sessionId
-    loadSessionData(sessionId)
+  function resetStreamingState() {
+    loading.value = false
+    streaming.value = false
+    streamingContent.value = ''
+    streamingReasoning.value = ''
+    processingStage.value = ''
   }
 
-  async function sendMessage(prompt) {
-    if (!prompt.trim() || loading.value || !currentModel.value) return
-
+  function beginStreamingPlaceholder(initialStage = '处理中...') {
     loading.value = true
     streaming.value = true
     streamingContent.value = ''
     streamingReasoning.value = ''
-    processingStage.value = '处理中...'
-
-    // 先在本地添加用户消息
-    const userMsg = {
-      id: `temp_${Date.now()}`,
-      role: 'user',
-      blocks: [{ type: 'text', content: prompt }],
-    }
-    messages.value.push(userMsg)
-
-    // 添加助手消息占位
+    processingStage.value = initialStage
     const assistantIdx = messages.value.length
     messages.value.push({
       id: `temp_assistant_${Date.now()}`,
@@ -340,17 +345,22 @@ export const useChatStore = defineStore('chat', () => {
       blocks: [],
       isStreaming: true,
     })
+    return assistantIdx
+  }
 
-    // 暂存工具调用信息
+  function createStreamHandlers(assistantIdx, { replaying = false } = {}) {
+    const gen = streamGeneration
     let pendingStreamToolCalls = null
-    // 固定流水线阶段：0 处理中 → 1 高校识别 → 2 召回中 → 3 主模型阶段，只增不减
     let preStage = 0
-    // 是否已开始输出正文，一旦开始锁定为「加载中...」，后续任何事件都不再改变
     let contentStarted = false
-    // 阶段最短显示时长：防止多个 SSE 事件挤在同一批到达时，某个阶段被瞬间覆盖
+    let settled = false
+    let replayCatchup = replaying
+    let replayStage = replaying ? '高校识别...' : ''
     const STAGE_MIN_MS = 400
+    const REPLAY_QUIET_MS = 80
     const stageQueue = []
     let stageTimer = null
+    let replayTimer = null
     let stageShownAt = Date.now()
 
     function scheduleStage() {
@@ -358,6 +368,7 @@ export const useChatStore = defineStore('chat', () => {
       const wait = Math.max(0, STAGE_MIN_MS - (Date.now() - stageShownAt))
       stageTimer = setTimeout(() => {
         stageTimer = null
+        if (gen !== streamGeneration) return
         processingStage.value = stageQueue.shift()
         stageShownAt = Date.now()
         scheduleStage()
@@ -371,9 +382,31 @@ export const useChatStore = defineStore('chat', () => {
       scheduleStage()
     }
 
-    function enterStage(stage, text) {
-      if (contentStarted || stage <= preStage) return
+    function finishReplayCatchup() {
+      if (!replayCatchup || gen !== streamGeneration || settled) return
+      replayCatchup = false
+      processingStage.value = replayStage
+      stageShownAt = Date.now()
+    }
+
+    function refreshReplayCatchup() {
+      if (!replayCatchup) return
+      if (replayTimer) clearTimeout(replayTimer)
+      replayTimer = setTimeout(() => {
+        replayTimer = null
+        finishReplayCatchup()
+      }, REPLAY_QUIET_MS)
+    }
+
+    function setStage(stage, text) {
+      if (contentStarted && text !== '加载中...') return
+      if (stage < preStage) return
       preStage = stage
+      if (replayCatchup) {
+        replayStage = text
+        refreshReplayCatchup()
+        return
+      }
       showStage(text)
     }
 
@@ -382,147 +415,210 @@ export const useChatStore = defineStore('chat', () => {
         clearTimeout(stageTimer)
         stageTimer = null
       }
+      if (replayTimer) {
+        clearTimeout(replayTimer)
+        replayTimer = null
+      }
       stageQueue.length = 0
-      processingStage.value = ''
+      if (gen === streamGeneration) processingStage.value = ''
     }
 
-    try {
-      await chatCompletionsStream(
-        prompt,
-        currentSessionId.value || '',
-        currentModel.value,
-        deepThinking.value,
-        (chunk) => {
-          if (chunk.session_id) {
-            if (!currentSessionId.value) {
-              currentSessionId.value = chunk.session_id
-              // 局部插入新会话，不重拉列表，保留已加载的分页与滚动位置
-              insertCreatedSession(chunk.session)
-            }
-            // 固定：会话建立后进入高校识别
-            enterStage(1, '高校识别...')
-          }
-          const blocks = messages.value[assistantIdx].blocks
-          if (chunk.reasoning_delta && chunk.reasoning_delta.content) {
-            // 深度思考不算正文，主模型阶段 → 思考中
-            enterStage(3, '思考中...')
-            streamingReasoning.value += chunk.reasoning_delta.content
-            // 更新或追加 reasoning block
-            const lastBlock = blocks[blocks.length - 1]
-            if (lastBlock && lastBlock.type === 'reasoning') {
-              lastBlock.content = streamingReasoning.value
-            } else {
-              blocks.push({ type: 'reasoning', content: streamingReasoning.value })
-            }
-          }
-          if (chunk.delta && chunk.delta.content) {
-            // 首个正文 delta → 加载中，并锁定，之后不再变化
-            if (!contentStarted) {
-              contentStarted = true
-              preStage = 3
-              showStage('加载中...')
-            }
-            streamingContent.value += chunk.delta.content
-            // 更新或追加 text block
-            const lastBlock = blocks[blocks.length - 1]
-            if (lastBlock && lastBlock.type === 'text') {
-              lastBlock.content = streamingContent.value
-            } else {
-              blocks.push({ type: 'text', content: streamingContent.value })
-            }
-          }
-          if (chunk.content_replace) {
-            // content_replace 只出现在主模型阶段；正文已开始时保持「加载中」不动
-            enterStage(3, '思考中...')
-            streamingContent.value = chunk.content_replace.content
-            const lastBlock = blocks[blocks.length - 1]
-            if (lastBlock && lastBlock.type === 'text') {
-              lastBlock.content = streamingContent.value
-            } else {
-              blocks.push({ type: 'text', content: streamingContent.value })
-            }
-          }
-          if (chunk.tool_calls) {
-            pendingStreamToolCalls = chunk.tool_calls
-            // 前置流程的两个工具不驱动状态；主模型自主调用其他工具时进入思考中
-            const isPreTool = chunk.tool_calls.every(tc => {
-              const n = tc.function?.name
-              return n === 'query_understanding' || n === 'university_recall'
-            })
-            if (!isPreTool) enterStage(3, '思考中...')
-            // 插入 tool_call blocks
-            for (const tc of chunk.tool_calls) {
-              const block = { type: 'tool_call', toolCall: tc }
-              // todo_write 流式时解析 arguments 携带 todoData
-              if (tc.function?.name === 'todo_write') {
-                try {
-                  const args = typeof tc.function.arguments === 'string'
-                    ? JSON.parse(tc.function.arguments) : tc.function.arguments
-                  block.todoData = { todos: args.todos || [], status: 'pending', result: null }
-                } catch {}
-              }
-              blocks.push(block)
-            }
-            // 重置流式状态，下一轮重新开始
-            streamingReasoning.value = ''
-            streamingContent.value = ''
-          }
-          if (chunk.tool_results && pendingStreamToolCalls) {
-            for (const tr of chunk.tool_results) {
-              const tc = pendingStreamToolCalls.find(c => c.id === tr.id)
-              // 必须通过 blocks 中的响应式代理回填，确保结果立即触发界面更新
-              for (const b of blocks) {
-                if (b.type === 'tool_call' && b.toolCall.id === tr.id) {
-                  b.toolCall.result = tr.result
-                  b.toolCall.status = tr.status
-                  // todo_write 回填 result
-                  if (b.todoData) {
-                    b.todoData.result = tr.result
-                    b.todoData.status = tr.status
-                  }
-                }
-              }
-              // 高校识别结果已完成并渲染后进入召回
-              if (tc?.function?.name === 'query_understanding') {
-                enterStage(2, '召回中...')
-              }
-            }
-          }
-        },
-        () => {
-          streaming.value = false
-          loading.value = false
-          clearStage()
-          messages.value[assistantIdx].isStreaming = false
-          messages.value[assistantIdx]._wasStreaming = true
-          streamingContent.value = ''
-          streamingReasoning.value = ''
-          // 局部更新当前会话时间并置顶，不重拉列表
-          touchCurrentSession()
-        },
-        (error) => {
-          streaming.value = false
-          loading.value = false
-          clearStage()
-          // 添加错误 text block
-          const blocks = messages.value[assistantIdx].blocks
-          blocks.push({ type: 'text', content: `错误: ${error}` })
-          messages.value[assistantIdx].isStreaming = false
-          messages.value[assistantIdx]._wasStreaming = true
-          streamingContent.value = ''
-          streamingReasoning.value = ''
+    function finishMessage() {
+      const assistant = messages.value[assistantIdx]
+      if (!assistant) return
+      assistant.isStreaming = false
+      assistant._wasStreaming = true
+    }
+
+    function onChunk(chunk) {
+      if (gen !== streamGeneration || settled || !messages.value[assistantIdx]) return
+      if (chunk.session_id) {
+        if (!currentSessionId.value) {
+          currentSessionId.value = chunk.session_id
+          insertCreatedSession(chunk.session)
+          localStorage.setItem('currentSessionId', chunk.session_id)
         }
-      )
-    } catch (err) {
-      streaming.value = false
-      loading.value = false
-      clearStage()
+        setStage(1, '高校识别...')
+      }
       const blocks = messages.value[assistantIdx].blocks
-      blocks.push({ type: 'text', content: `请求失败: ${err.message}` })
-      messages.value[assistantIdx].isStreaming = false
-      messages.value[assistantIdx]._wasStreaming = true
-      streamingContent.value = ''
-      streamingReasoning.value = ''
+      if (chunk.reasoning_delta?.content) {
+        setStage(3, '思考中...')
+        streamingReasoning.value += chunk.reasoning_delta.content
+        const lastBlock = blocks[blocks.length - 1]
+        if (lastBlock?.type === 'reasoning') {
+          lastBlock.content = streamingReasoning.value
+        } else {
+          blocks.push({ type: 'reasoning', content: streamingReasoning.value })
+        }
+      }
+      if (chunk.delta?.content) {
+        if (!contentStarted) {
+          contentStarted = true
+          setStage(4, '加载中...')
+        }
+        streamingContent.value += chunk.delta.content
+        const lastBlock = blocks[blocks.length - 1]
+        if (lastBlock?.type === 'text') {
+          lastBlock.content = streamingContent.value
+        } else {
+          blocks.push({ type: 'text', content: streamingContent.value })
+        }
+      }
+      if (chunk.content_replace) {
+        setStage(3, '思考中...')
+        streamingContent.value = chunk.content_replace.content
+        const lastBlock = blocks[blocks.length - 1]
+        if (lastBlock?.type === 'text') {
+          lastBlock.content = streamingContent.value
+        } else {
+          blocks.push({ type: 'text', content: streamingContent.value })
+        }
+      }
+      if (chunk.tool_calls) {
+        pendingStreamToolCalls = chunk.tool_calls
+        const toolNames = chunk.tool_calls.map(tc => tc.function?.name)
+        const isPreTool = toolNames.every(name => (
+          name === 'query_understanding' || name === 'university_recall'
+        ))
+        if (toolNames.includes('university_recall')) {
+          setStage(2, '召回中...')
+        } else if (!isPreTool) {
+          setStage(3, '思考中...')
+        }
+        for (const tc of chunk.tool_calls) {
+          const block = { type: 'tool_call', toolCall: tc }
+          if (tc.function?.name === 'todo_write') {
+            try {
+              const args = typeof tc.function.arguments === 'string'
+                ? JSON.parse(tc.function.arguments) : tc.function.arguments
+              block.todoData = { todos: args.todos || [], status: 'pending', result: null }
+            } catch {}
+          }
+          blocks.push(block)
+        }
+        streamingReasoning.value = ''
+        streamingContent.value = ''
+      }
+      if (chunk.tool_results && pendingStreamToolCalls) {
+        for (const result of chunk.tool_results) {
+          const toolCall = pendingStreamToolCalls.find(call => call.id === result.id)
+          for (const block of blocks) {
+            if (block.type === 'tool_call' && block.toolCall.id === result.id) {
+              block.toolCall.result = result.result
+              block.toolCall.status = result.status
+              if (block.todoData) {
+                block.todoData.result = result.result
+                block.todoData.status = result.status
+              }
+            }
+          }
+          if (toolCall?.function?.name === 'query_understanding') {
+            try {
+              const resultData = typeof result.result === 'string'
+                ? JSON.parse(result.result) : result.result
+              if ((resultData?.universities?.confirmed || []).length === 0) {
+                setStage(3, '思考中...')
+              }
+            } catch {}
+          } else if (toolCall?.function?.name === 'university_recall') {
+            setStage(2, '召回中...')
+          }
+        }
+      }
+    }
+
+    function onDone() {
+      if (gen !== streamGeneration || settled) return
+      settled = true
+      resetStreamingState()
+      clearStage()
+      finishMessage()
+      touchCurrentSession()
+    }
+
+    function onError(error) {
+      if (gen !== streamGeneration || settled) return
+      settled = true
+      resetStreamingState()
+      clearStage()
+      const assistant = messages.value[assistantIdx]
+      if (assistant) {
+        assistant.blocks.push({ type: 'text', content: `错误: ${error}` })
+      }
+      finishMessage()
+    }
+
+    return { onChunk, onDone, onError, clearStage }
+  }
+
+  function newSession() {
+    abortActiveStream()
+    resetStreamingState()
+    currentSessionId.value = null
+    messages.value = []
+    localStorage.removeItem('currentSessionId')
+  }
+
+  function selectSession(sessionId) {
+    abortActiveStream()
+    resetStreamingState()
+    currentSessionId.value = sessionId
+    loadSessionData(sessionId)
+  }
+
+  async function tryResumeActiveStream(sessionId) {
+    if (loading.value || currentSessionId.value !== sessionId) return
+    let active
+    try {
+      active = await getActiveStream(sessionId)
+    } catch {
+      return
+    }
+    if (loading.value || currentSessionId.value !== sessionId) return
+
+    const userMessageIdx = messages.value.findIndex(message => message.id === active.stream_id)
+    if (userMessageIdx === -1) return
+    messages.value = messages.value.slice(0, userMessageIdx + 1)
+
+    abortActiveStream()
+    const assistantIdx = beginStreamingPlaceholder('')
+    const handlers = createStreamHandlers(assistantIdx, { replaying: true })
+    const handle = attachChatStream(active.stream_id, handlers)
+    activeStreamHandle = handle
+    try {
+      await handle.promise
+    } catch (err) {
+      handlers.onError(`请求失败: ${err.message || '未知错误'}`)
+    } finally {
+      if (activeStreamHandle === handle) activeStreamHandle = null
+    }
+  }
+
+  async function sendMessage(prompt) {
+    if (!prompt.trim() || loading.value || !currentModel.value) return
+
+    abortActiveStream()
+    messages.value.push({
+      id: `temp_${Date.now()}`,
+      role: 'user',
+      blocks: [{ type: 'text', content: prompt }],
+    })
+    const assistantIdx = beginStreamingPlaceholder()
+    const handlers = createStreamHandlers(assistantIdx)
+    const handle = chatCompletionsStream(
+      prompt,
+      currentSessionId.value || '',
+      currentModel.value,
+      deepThinking.value,
+      handlers,
+    )
+    activeStreamHandle = handle
+    try {
+      await handle.promise
+    } catch (err) {
+      handlers.onError(`请求失败: ${err.message || '未知错误'}`)
+    } finally {
+      if (activeStreamHandle === handle) activeStreamHandle = null
     }
   }
 
