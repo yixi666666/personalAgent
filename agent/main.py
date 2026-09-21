@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from agent.config import get_config
 from agent.database import get_db, close_db
-from agent.routers import chat, sessions, models, universities
+from agent.routers import auth, chat, sessions, models, universities
 from agent.services.tool_manager import get_tool_manager
 from agent.services.skill_manager import get_skill_manager
 from agent.services.llm_client import get_llm_client
@@ -101,6 +101,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router, prefix="/v1", tags=["账号认证"])
 app.include_router(chat.router, prefix="/v1", tags=["对话服务"])
 app.include_router(sessions.router, prefix="/v1", tags=["会话管理"])
 app.include_router(models.router, prefix="/v1", tags=["模型管理"])

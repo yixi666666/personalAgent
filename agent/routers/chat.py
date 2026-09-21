@@ -3,7 +3,9 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from agent.services.auth import get_current_user
 from fastapi.responses import StreamingResponse
 
 from agent.models.chat import ChatRequest
@@ -74,9 +76,9 @@ def _error_response(message: str) -> StreamingResponse:
     )
 
 
-async def _subscribe_generator(stream_id: str) -> AsyncGenerator[str, None]:
+async def _subscribe_generator(stream_id: str, user_id: str) -> AsyncGenerator[str, None]:
     bus = get_stream_bus()
-    subscription = bus.subscribe(stream_id)
+    subscription = bus.subscribe(stream_id, user_id)
     if subscription is None:
         yield _format_sse_event({"type": "error", "error": "对话流不存在或已过期"})
         yield "data: [DONE]\n\n"
@@ -103,15 +105,16 @@ async def _subscribe_generator(stream_id: str) -> AsyncGenerator[str, None]:
 
 
 @router.post("/chat/completions")
-async def chat_completions(request: ChatRequest):
+async def chat_completions(request: ChatRequest, current_user: dict = Depends(get_current_user)):
     """启动独立后台对话管线，并通过 SSE 订阅处理事件。"""
     bus = get_stream_bus()
-    if request.session_id and bus.active_stream_for_session(request.session_id):
+    if request.session_id and bus.active_stream_for_session(request.session_id, current_user["id"]):
         return _error_response("当前会话正在处理上一条消息，请等待完成后再发送")
 
     chat_service = get_chat_service()
     try:
         session_id, user_msg_id, created_session = await chat_service.prepare_session(
+            user_id=current_user["id"],
             session_id=request.session_id,
             prompt=request.prompt,
             model=request.model,
@@ -140,29 +143,32 @@ async def chat_completions(request: ChatRequest):
     bus.start_stream(
         session_id=session_id,
         stream_id=user_msg_id,
+        user_id=current_user["id"],
         pipeline=pipeline(),
     )
     return StreamingResponse(
-        _subscribe_generator(user_msg_id),
+        _subscribe_generator(user_msg_id, current_user["id"]),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
 
 
 @router.get("/chat/streams/active")
-async def get_active_stream(session_id: str = Query(...)):
-    stream = get_stream_bus().active_stream_for_session(session_id)
+async def get_active_stream(
+    session_id: str = Query(...), current_user: dict = Depends(get_current_user)
+):
+    stream = get_stream_bus().active_stream_for_session(session_id, current_user["id"])
     if stream is None:
         raise HTTPException(status_code=404, detail="当前会话没有活跃对话流")
     return {"stream_id": stream.stream_id, "session_id": stream.session_id}
 
 
 @router.get("/chat/stream/{stream_id}")
-async def attach_chat_stream(stream_id: str):
-    if get_stream_bus().get(stream_id) is None:
+async def attach_chat_stream(stream_id: str, current_user: dict = Depends(get_current_user)):
+    if get_stream_bus().get(stream_id, current_user["id"]) is None:
         raise HTTPException(status_code=404, detail="对话流不存在或已过期")
     return StreamingResponse(
-        _subscribe_generator(stream_id),
+        _subscribe_generator(stream_id, current_user["id"]),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )

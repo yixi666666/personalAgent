@@ -1,9 +1,13 @@
+import logging
 import os
+import secrets
 from typing import Any, Optional
 from dynaconf import Dynaconf
 
 
+logger = logging.getLogger(__name__)
 _config_instance: Optional["Config"] = None
+_auth_cookie_secret: Optional[str] = None
 
 _base_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -46,6 +50,20 @@ class Config:
     @property
     def database_echo(self) -> bool:
         return _settings.get("database", {}).get("echo", False)
+
+    @property
+    def auth_cookie_secret(self) -> str:
+        global _auth_cookie_secret
+        if _auth_cookie_secret is None:
+            configured_secret = os.environ.get("AUTH_COOKIE_SECRET")
+            if configured_secret:
+                _auth_cookie_secret = configured_secret
+            else:
+                _auth_cookie_secret = secrets.token_hex(32)
+                logger.warning(
+                    "未配置 AUTH_COOKIE_SECRET，已使用进程级随机密钥；服务重启后现有登录状态将失效"
+                )
+        return _auth_cookie_secret
 
     @property
     def logging(self) -> dict:

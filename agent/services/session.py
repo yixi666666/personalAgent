@@ -71,15 +71,15 @@ def _format_display_time(ts: Optional[int]) -> Optional[str]:
 
 
 class SessionManager:
-    def create_session(self, prompt: str = "") -> dict:
+    def create_session(self, user_id: str, prompt: str = "") -> dict:
         """创建会话，标题取自首条用户消息 prompt 的前 15 个字符"""
         session_id = str(uuid.uuid4())
         now = _utc_now()
         title = _build_title(prompt, now)
         db = get_db()
         db.execute(
-            "INSERT INTO sessions (id, title, status, created_time, updated_time) VALUES (?, ?, ?, ?, ?)",
-            (session_id, title, "active", now, now),
+            "INSERT INTO sessions (id, user_id, title, status, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?)",
+            (session_id, user_id, title, "active", now, now),
         )
         db.commit()
         return {
@@ -266,12 +266,12 @@ class SessionManager:
         db.commit()
         return True
 
-    def get_session(self, session_id: str) -> Optional[SessionDetailResponse]:
-        """获取会话详情，返回格式符合文档规范（contents 数组）"""
+    def get_session(self, session_id: str, user_id: str) -> Optional[SessionDetailResponse]:
+        """获取当前用户的会话详情，返回格式符合文档规范（contents 数组）"""
         db = get_db()
         session_row = db.execute(
-            "SELECT * FROM sessions WHERE id = ?",
-            (session_id,),
+            "SELECT * FROM sessions WHERE id = ? AND user_id = ?",
+            (session_id, user_id),
         ).fetchone()
         if not session_row:
             return None
@@ -328,17 +328,18 @@ class SessionManager:
         )
 
     def list_sessions(
-        self, limit: int = 30, offset: int = 0
+        self, user_id: str, limit: int = 30, offset: int = 0
     ) -> dict:
         db = get_db()
         total_row = db.execute(
-            "SELECT COUNT(*) as cnt FROM sessions WHERE status != 'deleted'",
+            "SELECT COUNT(*) as cnt FROM sessions WHERE user_id = ? AND status != 'deleted'",
+            (user_id,),
         ).fetchone()
         total = total_row["cnt"]
         rows = db.execute(
             "SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as message_count "
-            "FROM sessions s WHERE s.status != 'deleted' ORDER BY s.updated_time DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            "FROM sessions s WHERE s.user_id = ? AND s.status != 'deleted' ORDER BY s.updated_time DESC LIMIT ? OFFSET ?",
+            (user_id, limit, offset),
         ).fetchall()
         sessions = [
             SessionListItem(
@@ -358,19 +359,19 @@ class SessionManager:
             "offset": offset,
         }
 
-    def delete_session(self, session_id: str) -> bool:
-        """软删除：将session状态标记为deleted"""
+    def delete_session(self, session_id: str, user_id: str) -> bool:
+        """软删除当前用户的会话"""
         db = get_db()
         session_row = db.execute(
-            "SELECT * FROM sessions WHERE id = ?",
-            (session_id,),
+            "SELECT 1 FROM sessions WHERE id = ? AND user_id = ?",
+            (session_id, user_id),
         ).fetchone()
         if not session_row:
             return False
         now = _utc_now()
         db.execute(
-            "UPDATE sessions SET status = 'deleted', updated_time = ? WHERE id = ?",
-            (now, session_id),
+            "UPDATE sessions SET status = 'deleted', updated_time = ? WHERE id = ? AND user_id = ?",
+            (now, session_id, user_id),
         )
         db.commit()
         return True
@@ -474,11 +475,11 @@ class SessionManager:
 
         return messages
 
-    def session_exists(self, session_id: str) -> bool:
+    def session_exists(self, session_id: str, user_id: str) -> bool:
         db = get_db()
         row = db.execute(
-            "SELECT 1 FROM sessions WHERE id = ?",
-            (session_id,),
+            "SELECT 1 FROM sessions WHERE id = ? AND user_id = ? AND status != 'deleted'",
+            (session_id, user_id),
         ).fetchone()
         return row is not None
 
@@ -520,15 +521,15 @@ class SessionManager:
         except (json.JSONDecodeError, TypeError):
             return None
 
-    def get_tool_calls_by_message(self, message_id: str) -> list[ToolCallDetail]:
-        """获取指定消息下所有工具调用详情（懒加载接口使用）
-
-        call_id 仅在同一条助手消息内唯一，需配合 message_id 定位
-        """
+    def get_tool_calls_by_message(self, message_id: str, user_id: str) -> list[ToolCallDetail]:
+        """获取当前用户指定消息下所有工具调用详情（懒加载接口使用）"""
         db = get_db()
         rows = db.execute(
-            "SELECT call_id, message_id, tool_name, parameters, status, result FROM tool_calls WHERE message_id = ? ORDER BY created_time",
-            (message_id,),
+            "SELECT tc.call_id, tc.message_id, tc.tool_name, tc.parameters, tc.status, tc.result "
+            "FROM tool_calls tc JOIN messages m ON m.id = tc.message_id "
+            "JOIN sessions s ON s.id = m.session_id "
+            "WHERE tc.message_id = ? AND s.user_id = ? ORDER BY tc.created_time",
+            (message_id, user_id),
         ).fetchall()
         return [
             ToolCallDetail(

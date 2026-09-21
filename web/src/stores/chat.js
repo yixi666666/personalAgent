@@ -14,6 +14,7 @@ import {
 
 let activeStreamHandle = null
 let streamGeneration = 0
+let userDataGeneration = 0
 
 export const useChatStore = defineStore('chat', () => {
   // 会话列表滑动分页：每页条数
@@ -102,9 +103,11 @@ export const useChatStore = defineStore('chat', () => {
   /** 重置并加载第一页会话（首屏使用） */
   async function loadSessionsData() {
     if (sessionsLoading.value) return
+    const generation = userDataGeneration
     sessionsLoading.value = true
     try {
       const data = await listSessions(SESSION_PAGE_SIZE, 0)
+      if (generation !== userDataGeneration) return
       sessions.value = (data.sessions || []).map(normalizeSession)
       sessionsTotal.value = data.total || 0
       sessionsOffset.value = (data.sessions || []).length
@@ -242,8 +245,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function loadSessionData(sessionId) {
+    const generation = userDataGeneration
     try {
       const data = await getSession(sessionId)
+      if (generation !== userDataGeneration) return
       currentSessionId.value = sessionId
       syncSessionFromDetail(data)
       const rawMessages = data.messages || []
@@ -551,6 +556,21 @@ export const useChatStore = defineStore('chat', () => {
     return { onChunk, onDone, onError, clearStage }
   }
 
+  function clearUserData() {
+    userDataGeneration += 1
+    abortActiveStream()
+    resetStreamingState()
+    sessions.value = []
+    sessionsTotal.value = 0
+    sessionsOffset.value = 0
+    sessionsLoading.value = false
+    currentSessionId.value = null
+    messages.value = []
+    selectedUniversity.value = null
+    universitySelectSeq.value = 0
+    localStorage.removeItem('currentSessionId')
+  }
+
   function newSession() {
     abortActiveStream()
     resetStreamingState()
@@ -716,5 +736,6 @@ export const useChatStore = defineStore('chat', () => {
     loadToolCallDetail,
     loadModels: loadModelsData,
     loadTools: loadToolsData,
+    clearUserData,
   }
 })

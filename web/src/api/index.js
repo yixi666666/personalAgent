@@ -3,8 +3,21 @@ import axios from 'axios'
 const api = axios.create({
   baseURL: '/v1',
   timeout: 60000,
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })
+
+function notifyUnauthorized() {
+  window.dispatchEvent(new CustomEvent('auth:unauthorized'))
+}
+
+api.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response?.status === 401) notifyUnauthorized()
+    return Promise.reject(error)
+  },
+)
 
 export function createSseStream(fetcher, { onChunk = () => {}, onDone = () => {}, onError = () => {} } = {}) {
   const controller = new AbortController()
@@ -30,6 +43,7 @@ export function createSseStream(fetcher, { onChunk = () => {}, onDone = () => {}
       if (!response.ok) {
         const errText = await response.text()
         settled = true
+        if (response.status === 401) notifyUnauthorized()
         onError(`请求失败: ${response.status} ${errText}`)
         return
       }
@@ -112,6 +126,7 @@ export function chatCompletionsStream(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      credentials: 'include',
       signal,
     }),
     handlers,
@@ -120,9 +135,31 @@ export function chatCompletionsStream(
 
 export function attachChatStream(streamId, handlers = {}) {
   return createSseStream(
-    signal => fetch(`/v1/chat/stream/${encodeURIComponent(streamId)}`, { signal }),
+    signal => fetch(`/v1/chat/stream/${encodeURIComponent(streamId)}`, {
+      credentials: 'include',
+      signal,
+    }),
     handlers,
   )
+}
+
+export async function registerUser(payload) {
+  const { data } = await api.post('/auth/register', payload)
+  return data
+}
+
+export async function loginUser(payload) {
+  const { data } = await api.post('/auth/login', payload)
+  return data
+}
+
+export async function getCurrentUser() {
+  const { data } = await api.get('/auth/me')
+  return data
+}
+
+export async function logoutUser() {
+  await api.post('/auth/logout')
 }
 
 export async function getActiveStream(sessionId) {

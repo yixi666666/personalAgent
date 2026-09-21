@@ -104,23 +104,26 @@
       @keydown.space.prevent="emit('open-settings')"
     >
       <div class="user-profile">
-        <el-avatar :size="36" style="background: #409eff">忆</el-avatar>
-        <span class="user-nickname">忆昔</span>
+        <el-avatar :size="36" :src="authStore.currentUser?.avatar || ''" style="background: #409eff">
+          {{ userInitial }}
+        </el-avatar>
+        <span class="user-nickname">{{ userName }}</span>
       </div>
-      <button class="settings-btn" type="button" title="设置" aria-label="设置" tabindex="-1">
-        <el-icon><Setting /></el-icon>
-      </button>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled, Setting, Search, Message } from '@element-plus/icons-vue'
+import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled, Search, Message } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
+import { useAuthStore } from '../stores/auth'
 
 const emit = defineEmits(['open-inbox', 'open-search', 'open-settings'])
 const chatStore = useChatStore()
+const authStore = useAuthStore()
+const userName = computed(() => authStore.currentUser?.display_name || authStore.currentUser?.username || '用户')
+const userInitial = computed(() => Array.from(userName.value)[0] || '用')
 
 const listRef = ref(null)
 // 距底部多少像素时触发加载下一页
@@ -373,7 +376,6 @@ function handlePinnedCommand() {}
 .sidebar-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   padding: 8px 16px;
   border-top: 1px solid #e4e7ed;
   cursor: pointer;
@@ -383,25 +385,5 @@ function handlePinnedCommand() {}
 .sidebar-footer:focus-visible {
   background: #e8eaed;
   outline: none;
-}
-
-.settings-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #606266;
-  font-size: 18px;
-  cursor: pointer;
-}
-
-.settings-btn:hover {
-  background: #e8eaed;
-  color: #409eff;
 }
 </style>

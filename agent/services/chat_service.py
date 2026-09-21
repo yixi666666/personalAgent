@@ -33,7 +33,7 @@ class ChatService:
     """聊天服务：协调会话管理、上下文构建、LLM调用和工具执行"""
 
     async def prepare_session(
-        self, session_id: Optional[str], prompt: str, model: str
+        self, user_id: str, session_id: Optional[str], prompt: str, model: str
     ) -> tuple[str, str, Optional[dict]]:
         """准备会话：创建或获取会话，保存用户消息
 
@@ -47,10 +47,10 @@ class ChatService:
 
         created_session = None
         if not session_id:
-            created_session = session_manager.create_session(prompt)
+            created_session = session_manager.create_session(user_id, prompt)
             session_id = created_session["id"]
 
-        if not session_manager.session_exists(session_id):
+        if not session_manager.session_exists(session_id, user_id):
             raise ValueError(f"会话不存在: {session_id}")
 
         parent_id = session_manager.get_last_message_id(session_id)
