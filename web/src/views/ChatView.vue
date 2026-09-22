@@ -275,7 +275,7 @@
       </div>
     </el-dialog>
 
-    <el-dialog v-model="inboxVisible" class="inbox-dialog" title="邮箱" width="600px" align-center @closed="selectedMail = null">
+    <el-dialog v-model="inboxVisible" class="inbox-dialog" title="通知" width="600px" align-center @closed="selectedMail = null">
       <button v-if="!selectedMail" class="mail-item" type="button" @click="selectedMail = demoMail">
         <span class="mail-unread-dot"></span>
         <span class="mail-summary">
@@ -285,7 +285,7 @@
         <time>{{ demoMail.time }}</time>
       </button>
       <article v-else class="mail-detail">
-        <button class="mail-back" type="button" @click="selectedMail = null">‹ 返回邮箱</button>
+        <button class="mail-back" type="button" @click="selectedMail = null">‹ 返回</button>
         <h3>{{ selectedMail.title }}</h3>
         <div class="mail-meta">来自：{{ selectedMail.sender }} · {{ selectedMail.time }}</div>
         <p>{{ selectedMail.content }}</p>

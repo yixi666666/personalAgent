@@ -9,7 +9,15 @@
           <el-input v-model="form.username" autocomplete="username" placeholder="请输入账号" />
         </el-form-item>
         <el-form-item label="密码" prop="password">
-          <el-input v-model="form.password" type="password" autocomplete="current-password" show-password placeholder="请输入密码" @keyup.enter="submit" />
+          <el-input
+            v-model="form.password"
+            type="password"
+            autocomplete="off"
+            :show-password="passwordManuallyEntered"
+            placeholder="请输入密码"
+            @input="passwordManuallyEntered = true"
+            @keyup.enter="submit"
+          />
         </el-form-item>
         <el-button class="auth-submit" type="primary" native-type="submit" :loading="submitting">登录</el-button>
       </el-form>
@@ -28,6 +36,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const formRef = ref(null)
 const submitting = ref(false)
+const passwordManuallyEntered = ref(false)
 const form = reactive({ username: '', password: '' })
 const rules = {
   username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
@@ -40,6 +49,8 @@ async function submit() {
     await formRef.value.validate()
     submitting.value = true
     await authStore.login(form)
+    form.password = ''
+    passwordManuallyEntered.value = false
     await router.replace('/chat')
   } catch (error) {
     if (error?.response) ElMessage.error(error.response.data?.detail || '登录失败，请检查账号和密码')

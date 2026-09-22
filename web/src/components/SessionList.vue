@@ -4,8 +4,8 @@
       <div class="sidebar-brand">
         <span class="sidebar-brand-name">小忆</span>
         <div class="sidebar-brand-actions">
-          <button class="header-icon-btn" type="button" title="收件箱" aria-label="收件箱" @click="emit('open-inbox')">
-            <el-icon><Message /></el-icon>
+          <button class="header-icon-btn" type="button" title="通知" aria-label="通知" @click="emit('open-inbox')">
+            <el-icon><Bell /></el-icon>
           </button>
           <button class="header-icon-btn" type="button" title="搜索会话" aria-label="搜索会话" @click="emit('open-search')">
             <el-icon><Search /></el-icon>
@@ -109,13 +109,14 @@
         </el-avatar>
         <span class="user-nickname">{{ userName }}</span>
       </div>
+      <el-icon class="settings-icon" aria-hidden="true"><Setting /></el-icon>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled, Search, Message } from '@element-plus/icons-vue'
+import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled, Search, Bell, Setting } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 import { useAuthStore } from '../stores/auth'
 
@@ -376,9 +377,16 @@ function handlePinnedCommand() {}
 .sidebar-footer {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 8px 16px;
   border-top: 1px solid #e4e7ed;
   cursor: pointer;
+}
+
+.settings-icon {
+  flex-shrink: 0;
+  color: #606266;
+  font-size: 18px;
 }
 
 .sidebar-footer:hover,
