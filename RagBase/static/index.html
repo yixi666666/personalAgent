@@ -133,12 +133,15 @@
           <button class="test-btn" onclick="runTest('health')">Health</button>
           <button class="test-btn" onclick="runTest('documents')">Documents</button>
           <button class="test-btn" onclick="runTest('search')">Search</button>
+          <button class="test-btn" onclick="runTest('hybrid-search')">Hybrid</button>
           <button class="test-btn" onclick="runTest('chat')">Chat</button>
           <button class="test-btn" onclick="runTest('all')" style="background:#4361ee;color:#fff;border-color:#4361ee;">全部测试</button>
         </div>
         <div class="test-params">
-          <label>测试查询语句 (Search/Chat)</label>
+          <label>测试查询语句 (Search/Chat/Hybrid)</label>
           <input type="text" id="testQuery" placeholder="输入测试查询..." value="你好">
+          <label style="margin-top:6px;">Hybrid Alpha (0=关键词, 1=向量, 0.5=混合)</label>
+          <input type="number" id="testAlpha" placeholder="0.5" value="0.5" min="0" max="1" step="0.1">
         </div>
         <div class="test-results" id="testResults"></div>
       </div>
@@ -383,6 +386,7 @@ async function runTest(target) {
   if (testRunning) return;
   testRunning = true;
   const query = document.getElementById('testQuery').value.trim() || '你好';
+  const alpha = parseFloat(document.getElementById('testAlpha').value) || 0.5;
   const resultsEl = document.getElementById('testResults');
 
   // 禁用所有按钮
@@ -397,7 +401,7 @@ async function runTest(target) {
     const res = await fetch(`${API}/v1/test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target, params: { query, top_k: 3, model: document.getElementById('modelSelect').value } }),
+      body: JSON.stringify({ target, params: { query, top_k: 3, alpha, model: document.getElementById('modelSelect').value } }),
     });
     const json = await res.json();
     const loadingEl = document.getElementById(loadingId);
@@ -441,7 +445,9 @@ function formatTestResult(name, result) {
     case 'documents':
       return `文档数量: ${result.count}\n${result.documents.map(d => `  - ${d.filename} (${d.chunks} 块)`).join('\n')}`;
     case 'search':
-      return `查询: ${result.query}\n返回结果: ${result.result_count} 条\n${result.results.map((r, i) => `  [${i+1}] 来源: ${r.metadata.filename} | 距离: ${r.score.toFixed(4)}\n      ${r.content.substring(0, 100)}...`).join('\n')}`;
+      return `查询: ${result.query}\n返回结果: ${result.result_count} 条\n${result.results.map((r, i) => `  [${i+1}] 来源: ${r.metadata.filename} 行${r.metadata.line_start}-${r.metadata.line_end} | 距离: ${r.score.toFixed(4)}\n      ${r.content.substring(0, 100)}...`).join('\n')}`;
+    case 'hybrid-search':
+      return `查询: ${result.query} (alpha=${result.alpha})\n返回结果: ${result.result_count} 条\n${result.results.map((r, i) => `  [${i+1}] 来源: ${r.filename} 行${r.line_start}-${r.line_end} | 分数: ${r.score.toFixed(4)}\n      ${r.text.substring(0, 100)}...`).join('\n')}`;
     case 'chat':
       return `查询: ${result.query}\n来源: ${result.sources.join(', ') || '无'}\n回答:\n${result.answer}`;
     default:

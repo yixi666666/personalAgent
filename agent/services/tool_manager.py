@@ -10,16 +10,16 @@ logger = logging.getLogger(__name__)
 
 
 class ToolManager:
-    """从toolService获取工具列表，缓存，校验参数，并行执行工具调用"""
+    """从capabilityService获取工具列表，缓存，校验参数，并行执行工具调用"""
 
     def __init__(self):
         config = get_config()
-        self._toolservice_url = config.toolservice_url
+        self._capabilityservice_url = config.capabilityservice_url
         self._call_timeout = config.tool_call_timeout
         self._tools: dict[str, dict] = {}
         self._http_client: Optional[httpx.AsyncClient] = None
         self._refresh_task: Optional[asyncio.Task] = None
-        self._refresh_interval = config.toolservice_refresh_interval
+        self._refresh_interval = config.capabilityservice_refresh_interval
 
     async def _get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
@@ -35,7 +35,7 @@ class ToolManager:
         """调用 GET http://localhost:8003/tools/list 刷新工具缓存"""
         try:
             client = await self._get_http_client()
-            url = f"{self._toolservice_url}/tools/list"
+            url = f"{self._capabilityservice_url}/tools/list"
             response = await client.get(url)
             response.raise_for_status()
             data = response.json()
@@ -191,7 +191,7 @@ class ToolManager:
 
         try:
             client = await self._get_http_client()
-            url = f"{self._toolservice_url}/tools/call"
+            url = f"{self._capabilityservice_url}/tools/call"
             payload = {"name": tool_name, "arguments": arguments}
             response = await asyncio.wait_for(
                 client.post(url, json=payload),

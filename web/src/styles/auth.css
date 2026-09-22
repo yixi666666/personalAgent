@@ -1,0 +1,63 @@
+.auth-page {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  overflow-y: auto;
+  background: linear-gradient(145deg, #ecf5ff 0%, #f7fbff 45%, #ffffff 100%);
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  border: 1px solid #d9ecff;
+  border-radius: 14px;
+}
+
+.register-card {
+  width: min(460px, 100%);
+}
+
+.auth-heading {
+  margin-bottom: 24px;
+  text-align: center;
+}
+
+.auth-heading h1 {
+  margin: 0;
+  color: #303133;
+  font-size: 26px;
+}
+
+.auth-switch {
+  color: #909399;
+  font-size: 14px;
+}
+
+:deep(.el-input__inner:-webkit-autofill),
+:deep(.el-input__inner:-webkit-autofill:hover),
+:deep(.el-input__inner:-webkit-autofill:focus),
+:deep(.el-input__inner:-webkit-autofill:active) {
+  box-shadow: 0 0 0 1000px #ffffff inset !important;
+  -webkit-text-fill-color: #303133 !important;
+  caret-color: #303133;
+}
+
+.auth-submit {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.auth-switch {
+  margin-top: 20px;
+  text-align: center;
+}
+
+.auth-switch a {
+  color: #409eff;
+  text-decoration: none;
+}
+
+.auth-switch a:hover {
+  text-decoration: underline;
+}

@@ -5,15 +5,12 @@ from typing import Optional, AsyncGenerator
 from openai import AsyncOpenAI, APIStatusError, APIConnectionError
 
 from agent.config import get_config
-from agent.services.context import sanitize_messages
 
 logger = logging.getLogger(__name__)
 
 
 class LLMClient:
     def __init__(self):
-        config = get_config()
-        self.default_model = config.default_model
         self._clients: dict[str, AsyncOpenAI] = {}
 
     def _get_client(self, provider: dict) -> AsyncOpenAI:
@@ -36,51 +33,51 @@ class LLMClient:
             await client.close()
         self._clients.clear()
 
-    def _resolve_provider(self, model: Optional[str] = None) -> dict:
+    def _resolve_provider(self, model: str) -> dict:
         config = get_config()
-        target_model = model or self.default_model
-        return config.resolve_model_provider(target_model)
+        return config.resolve_model_provider(model)
 
     def _build_extra_body(self, provider: dict, stream: bool, deep_thinking: bool = False) -> dict:
-        """构建 extra_body：星火模型关闭联网搜索，非本地模型流式时包含 stream_options，DeepSeek 思考模式"""
+        """构建各模型提供商的扩展请求参数"""
         extra: dict = {}
-        if provider.get("provider") == "spark":
+        provider_name = provider.get("provider")
+        if provider_name == "spark":
             extra["search_disable"] = True
-        if stream and provider.get("provider") != "local":
+        if stream and provider_name != "local":
             extra["stream_options"] = {"include_usage": True}
-        if provider.get("provider") == "deepseek":
+        if provider_name in ("deepseek", "glm"):
             if deep_thinking:
                 extra["thinking"] = {"type": "enabled"}
             else:
                 extra["thinking"] = {"type": "disabled"}
+        if provider_name == "qwen":
+            extra["enable_thinking"] = deep_thinking
         return extra or None
 
     async def chat_completion(
         self,
         messages: list[dict],
-        model: Optional[str] = None,
+        model: str,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         tools: Optional[list[dict]] = None,
         supports_tools: bool = True,
         deep_thinking: bool = False,
         round_num: int = 1,
+        agent_name: str = "聊天Agent",
     ) -> dict:
         """非流式调用LLM（用于本地模型 stream=false + tools）"""
-        messages = sanitize_messages(messages, supports_tools=supports_tools)
         provider = self._resolve_provider(model)
         client = self._get_client(provider)
 
         kwargs: dict = {
-            "model": model or provider["name"],
+            "model": model,
             "messages": messages,
             "max_tokens": max_tokens or provider.get("max_tokens", 2048),
             "temperature": temperature if temperature is not None else provider.get("temperature", 0.7),
             "stream": False,
         }
-        # 本地模型（LLaMA-Factory）不会用 chat_template 渲染 tools 参数，
-        # 工具格式指令已通过系统提示词注入，不需要传 tools/tool_choice 参数
-        if tools and supports_tools and provider.get("provider") != "local":
+        if tools and supports_tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
@@ -88,13 +85,13 @@ class LLMClient:
         if extra_body:
             kwargs["extra_body"] = extra_body
 
-        round_prefix = f"【第{round_num}轮】" if round_num == 1 else f"[第{round_num}轮]"
-        logger.debug(f"{round_prefix} 模型调用 >>> kwargs={json.dumps(kwargs, ensure_ascii=False)}")
+        round_prefix = f"[{agent_name}][第{round_num}轮]"
+        logger.info(f"{round_prefix} 模型调用(非流式) >>> {json.dumps(kwargs, ensure_ascii=False)}")
 
         try:
             response = await client.chat.completions.create(**kwargs)
             result = response.model_dump()
-            logger.debug(f"{round_prefix} 模型返回 <<< {json.dumps(result, ensure_ascii=False)}")
+            logger.info(f"{round_prefix} 模型返回(非流式) <<< {json.dumps(result, ensure_ascii=False)}")
             return result
         except APIStatusError as e:
             logger.error(f"LLM非流式调用失败 [{provider['name']}]: {e.status_code}")
@@ -108,21 +105,21 @@ class LLMClient:
     async def chat_stream(
         self,
         messages: list[dict],
-        model: Optional[str] = None,
+        model: str,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         tools: Optional[list[dict]] = None,
         supports_tools: bool = True,
         deep_thinking: bool = False,
         round_num: int = 1,
+        agent_name: str = "聊天Agent",
     ) -> AsyncGenerator[dict, None]:
         """流式调用LLM，yield SDK 解析后的 chunk dict"""
-        messages = sanitize_messages(messages, supports_tools=supports_tools)
         provider = self._resolve_provider(model)
         client = self._get_client(provider)
 
         kwargs: dict = {
-            "model": model or provider["name"],
+            "model": model,
             "messages": messages,
             "max_tokens": max_tokens or provider.get("max_tokens", 2048),
             "temperature": temperature if temperature is not None else provider.get("temperature", 0.7),
@@ -137,8 +134,8 @@ class LLMClient:
         if extra_body:
             kwargs["extra_body"] = extra_body
 
-        round_prefix = f"【第{round_num}轮】" if round_num == 1 else f"[第{round_num}轮]"
-        logger.debug(f"{round_prefix} 模型调用 >>> kwargs={json.dumps(kwargs, ensure_ascii=False)}")
+        round_prefix = f"[{agent_name}][第{round_num}轮]"
+        logger.info(f"{round_prefix} 模型调用(流式) >>> {json.dumps(kwargs, ensure_ascii=False)}")
 
         try:
             stream = await client.chat.completions.create(**kwargs)

@@ -1,5 +1,6 @@
 import uuid
 import time
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -17,10 +18,24 @@ logger = logging.getLogger(__name__)
 # UTC+8 时区
 UTC8 = timezone(timedelta(hours=8))
 
+# 方式A：这些工具的 tool_calls 不懒加载，历史消息直接内联完整数据
+INLINE_TOOL_NAMES = {"todo_write", "query_understanding"}
+
 
 def _utc_now() -> int:
     """返回当前 UTC 时间戳（秒）"""
     return int(time.time())
+
+
+def _normalize_tool_arguments(tool_name: str, arguments: str) -> str:
+    """确保历史工具调用参数符合 OpenAI 的 JSON 对象格式。"""
+    try:
+        parsed = json.loads(arguments)
+    except (json.JSONDecodeError, TypeError):
+        return arguments
+    if tool_name == "university_recall" and isinstance(parsed, list):
+        return json.dumps({"universities": parsed}, ensure_ascii=False)
+    return arguments
 
 
 def _format_title(ts: int) -> str:
@@ -29,23 +44,42 @@ def _format_title(ts: int) -> str:
     return f"对话 {dt.strftime('%m-%d %H:%M:%S')}"
 
 
+# 会话标题取自首条用户消息的前 N 个字符
+TITLE_MAX_CHARS = 15
+
+
+def _build_title(prompt: str, ts: int) -> str:
+    """用首条用户消息生成会话标题：压缩空白后取前 15 个字符
+
+    prompt 为空或纯空白时回退到时间戳标题
+    """
+    text = " ".join((prompt or "").split())
+    if not text:
+        return _format_title(ts)
+    return text[:TITLE_MAX_CHARS]
+
+
 def _format_display_time(ts: Optional[int]) -> Optional[str]:
-    """将 UTC 时间戳转为 UTC+8 可读字符串，用于前端展示"""
+    """将 UTC 时间戳转为 UTC+8 可读字符串，用于前端展示
+
+    时间精确到分钟（不显示秒），仅用于会话级别时间
+    """
     if ts is None:
         return None
     dt = datetime.fromtimestamp(ts, tz=UTC8)
-    return dt.strftime('%Y-%m-%d %H:%M:%S')
+    return dt.strftime('%Y-%m-%d %H:%M')
 
 
 class SessionManager:
-    def create_session(self) -> dict:
+    def create_session(self, user_id: str, prompt: str = "") -> dict:
+        """创建会话，标题取自首条用户消息 prompt 的前 15 个字符"""
         session_id = str(uuid.uuid4())
         now = _utc_now()
-        title = _format_title(now)
+        title = _build_title(prompt, now)
         db = get_db()
         db.execute(
-            "INSERT INTO sessions (id, title, status, created_time, updated_time) VALUES (?, ?, ?, ?, ?)",
-            (session_id, title, "active", now, now),
+            "INSERT INTO sessions (id, user_id, title, status, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?)",
+            (session_id, user_id, title, "active", now, now),
         )
         db.commit()
         return {
@@ -59,11 +93,13 @@ class SessionManager:
     def add_message(
         self, session_id: str, role: str, content: str = "", parent_id: Optional[str] = None,
         reasoning_content: str = "",
+        reasoning_metadata: Optional[dict] = None,
     ) -> MessageItem:
         """添加消息，内容存入 message_contents 表
 
         适用于：用户消息、纯文本助手回复、系统消息
         reasoning_content: DeepSeek 深度思考内容，存为 type='reasoning'
+        reasoning_metadata: reasoning 内容块的展示属性，如 {"tokens": 256, "finish_reason": "stop"}
         """
         msg_id = str(uuid.uuid4())
         now = _utc_now()
@@ -76,17 +112,18 @@ class SessionManager:
         sort_order = 0
         if reasoning_content:
             mc_id = str(uuid.uuid4())
+            metadata_json = json.dumps(reasoning_metadata, ensure_ascii=False) if reasoning_metadata else None
             db.execute(
-                "INSERT INTO message_contents (id, message_id, type, content, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-                (mc_id, msg_id, "reasoning", reasoning_content, sort_order, now),
+                "INSERT INTO message_contents (id, message_id, type, content, metadata, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mc_id, msg_id, "reasoning", reasoning_content, metadata_json, sort_order, now),
             )
-            contents.append(ContentItem(type="reasoning", content=reasoning_content, sort_order=sort_order))
+            contents.append(ContentItem(type="reasoning", content=reasoning_content, metadata=reasoning_metadata, sort_order=sort_order))
             sort_order += 1
         if content:
             mc_id = str(uuid.uuid4())
             db.execute(
-                "INSERT INTO message_contents (id, message_id, type, content, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-                (mc_id, msg_id, "text", content, sort_order, now),
+                "INSERT INTO message_contents (id, message_id, type, content, metadata, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mc_id, msg_id, "text", content, None, sort_order, now),
             )
             contents.append(ContentItem(type="text", content=content, sort_order=sort_order))
         db.execute(
@@ -96,7 +133,6 @@ class SessionManager:
         db.commit()
         return MessageItem(
             id=msg_id, parent_id=parent_id, role=role, contents=contents,
-            created_time=_format_display_time(now), updated_time=_format_display_time(now),
         )
 
     def add_assistant_message_with_tool_calls(
@@ -106,6 +142,7 @@ class SessionManager:
         tool_calls: list[dict],
         parent_id: Optional[str] = None,
         reasoning_content: str = "",
+        reasoning_metadata: Optional[dict] = None,
     ) -> str:
         """添加带工具调用的助手消息
 
@@ -128,31 +165,32 @@ class SessionManager:
         sort_order = 0
         if reasoning_content:
             mc_id = str(uuid.uuid4())
+            metadata_json = json.dumps(reasoning_metadata, ensure_ascii=False) if reasoning_metadata else None
             db.execute(
-                "INSERT INTO message_contents (id, message_id, type, content, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-                (mc_id, msg_id, "reasoning", reasoning_content, sort_order, now),
+                "INSERT INTO message_contents (id, message_id, type, content, metadata, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mc_id, msg_id, "reasoning", reasoning_content, metadata_json, sort_order, now),
             )
             sort_order += 1
         if content:
             mc_id = str(uuid.uuid4())
             db.execute(
-                "INSERT INTO message_contents (id, message_id, type, content, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-                (mc_id, msg_id, "text", content, sort_order, now),
+                "INSERT INTO message_contents (id, message_id, type, content, metadata, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mc_id, msg_id, "text", content, None, sort_order, now),
             )
             sort_order += 1
         for tc in tool_calls:
             call_id = tc.get("id", f"call_{uuid.uuid4().hex[:8]}")
             mc_id = str(uuid.uuid4())
+            tool_name = tc.get("function", {}).get("name", "unknown")
+            tool_metadata = {"tool_name": tool_name}
             db.execute(
-                "INSERT INTO message_contents (id, message_id, type, content, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-                (mc_id, msg_id, "tool_call", call_id, sort_order, now),
+                "INSERT INTO message_contents (id, message_id, type, content, metadata, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mc_id, msg_id, "tool_call", call_id, json.dumps(tool_metadata, ensure_ascii=False), sort_order, now),
             )
             sort_order += 1
             # 3. 插入 tool_calls 记录（status=pending）
-            tool_name = tc.get("function", {}).get("name", "unknown")
             arguments = tc.get("function", {}).get("arguments", "{}")
             if isinstance(arguments, dict):
-                import json
                 arguments = json.dumps(arguments, ensure_ascii=False)
             tc_id = str(uuid.uuid4())
             db.execute(
@@ -212,8 +250,8 @@ class SessionManager:
             # 没有 text 内容块，创建一个
             mc_id = str(uuid.uuid4())
             db.execute(
-                "INSERT INTO message_contents (id, message_id, type, content, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-                (mc_id, message_id, "text", content, 0, now),
+                "INSERT INTO message_contents (id, message_id, type, content, metadata, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mc_id, message_id, "text", content, None, 0, now),
             )
         # 更新消息的 updated_time
         db.execute(
@@ -228,12 +266,12 @@ class SessionManager:
         db.commit()
         return True
 
-    def get_session(self, session_id: str) -> Optional[SessionDetailResponse]:
-        """获取会话详情，返回格式符合文档规范（contents 数组）"""
+    def get_session(self, session_id: str, user_id: str) -> Optional[SessionDetailResponse]:
+        """获取当前用户的会话详情，返回格式符合文档规范（contents 数组）"""
         db = get_db()
         session_row = db.execute(
-            "SELECT * FROM sessions WHERE id = ?",
-            (session_id,),
+            "SELECT * FROM sessions WHERE id = ? AND user_id = ?",
+            (session_id, user_id),
         ).fetchone()
         if not session_row:
             return None
@@ -245,20 +283,39 @@ class SessionManager:
         for row in msg_rows:
             # 从 message_contents 表读取内容块
             mc_rows = db.execute(
-                "SELECT type, content, sort_order FROM message_contents WHERE message_id = ? ORDER BY sort_order",
+                "SELECT type, content, metadata, sort_order FROM message_contents WHERE message_id = ? ORDER BY sort_order",
                 (row["id"],),
             ).fetchall()
-            contents = [
-                ContentItem(type=mc["type"], content=mc["content"], sort_order=mc["sort_order"])
-                for mc in mc_rows
-            ]
+            contents = []
+            for mc in mc_rows:
+                metadata = None
+                if mc["metadata"]:
+                    try:
+                        metadata = json.loads(mc["metadata"])
+                    except (json.JSONDecodeError, TypeError):
+                        metadata = None
+                # 方式A：todo_write / query_understanding 的 tool_calls 不懒加载，内联完整数据
+                if mc["type"] == "tool_call" and metadata and metadata.get("tool_name") in INLINE_TOOL_NAMES:
+                    call_id = mc["content"]
+                    tc_row = db.execute(
+                        "SELECT parameters, status, result FROM tool_calls WHERE message_id = ? AND call_id = ?",
+                        (row["id"], call_id),
+                    ).fetchone()
+                    if tc_row:
+                        metadata["parameters"] = json.loads(tc_row["parameters"]) if tc_row["parameters"] else None
+                        metadata["status"] = tc_row["status"]
+                        metadata["result"] = tc_row["result"]
+                contents.append(ContentItem(
+                    type=mc["type"],
+                    content=mc["content"],
+                    metadata=metadata,
+                    sort_order=mc["sort_order"] or 0,
+                ))
             msg_item = MessageItem(
                 id=row["id"],
                 parent_id=row["parent_id"],
                 role=row["role"],
                 contents=contents,
-                created_time=_format_display_time(row["created_time"]),
-                updated_time=_format_display_time(row["updated_time"]),
             )
             messages.append(msg_item)
         return SessionDetailResponse(
@@ -271,17 +328,18 @@ class SessionManager:
         )
 
     def list_sessions(
-        self, limit: int = 20, offset: int = 0
+        self, user_id: str, limit: int = 30, offset: int = 0
     ) -> dict:
         db = get_db()
         total_row = db.execute(
-            "SELECT COUNT(*) as cnt FROM sessions WHERE status != 'deleted'",
+            "SELECT COUNT(*) as cnt FROM sessions WHERE user_id = ? AND status != 'deleted'",
+            (user_id,),
         ).fetchone()
         total = total_row["cnt"]
         rows = db.execute(
             "SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as message_count "
-            "FROM sessions s WHERE s.status != 'deleted' ORDER BY s.updated_time DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            "FROM sessions s WHERE s.user_id = ? AND s.status != 'deleted' ORDER BY s.updated_time DESC LIMIT ? OFFSET ?",
+            (user_id, limit, offset),
         ).fetchall()
         sessions = [
             SessionListItem(
@@ -301,19 +359,19 @@ class SessionManager:
             "offset": offset,
         }
 
-    def delete_session(self, session_id: str) -> bool:
-        """软删除：将session状态标记为deleted"""
+    def delete_session(self, session_id: str, user_id: str) -> bool:
+        """软删除当前用户的会话"""
         db = get_db()
         session_row = db.execute(
-            "SELECT * FROM sessions WHERE id = ?",
-            (session_id,),
+            "SELECT 1 FROM sessions WHERE id = ? AND user_id = ?",
+            (session_id, user_id),
         ).fetchone()
         if not session_row:
             return False
         now = _utc_now()
         db.execute(
-            "UPDATE sessions SET status = 'deleted', updated_time = ? WHERE id = ?",
-            (now, session_id),
+            "UPDATE sessions SET status = 'deleted', updated_time = ? WHERE id = ? AND user_id = ?",
+            (now, session_id, user_id),
         )
         db.commit()
         return True
@@ -349,12 +407,17 @@ class SessionManager:
 
                 if has_tool_calls:
                     # 构造 assistant 消息（含 tool_calls）
-                    # 提取 reasoning/text 内容
+                    # 提取 reasoning/text 内容（reasoning 作为独立字段，不拼入 content）
                     text_parts = []
+                    reasoning_parts = []
                     for mc in mc_rows:
-                        if mc["type"] in ("text", "reasoning"):
+                        if mc["type"] == "text":
                             text_parts.append(mc["content"] or "")
+                        elif mc["type"] == "reasoning":
+                            reasoning_parts.append(mc["content"] or "")
                     msg["content"] = "\n".join(text_parts) if text_parts else None
+                    if reasoning_parts:
+                        msg["reasoning_content"] = "\n".join(reasoning_parts)
 
                     # 从 tool_calls 表获取工具调用详情
                     tc_rows = db.execute(
@@ -367,7 +430,9 @@ class SessionManager:
                             "type": "function",
                             "function": {
                                 "name": tc["tool_name"],
-                                "arguments": tc["parameters"],
+                                "arguments": _normalize_tool_arguments(
+                                    tc["tool_name"], tc["parameters"]
+                                ),
                             },
                         }
                         for tc in tc_rows
@@ -387,12 +452,17 @@ class SessionManager:
                             "content": tc["result"] or "",
                         })
                 else:
-                    # 普通助手消息（纯文本）
+                    # 普通助手消息（纯文本，reasoning 作为独立字段）
                     text_parts = []
+                    reasoning_parts = []
                     for mc in mc_rows:
-                        if mc["type"] in ("text", "reasoning"):
+                        if mc["type"] == "text":
                             text_parts.append(mc["content"] or "")
+                        elif mc["type"] == "reasoning":
+                            reasoning_parts.append(mc["content"] or "")
                     msg["content"] = "\n".join(text_parts) if text_parts else ""
+                    if reasoning_parts:
+                        msg["reasoning_content"] = "\n".join(reasoning_parts)
                     messages.append(msg)
             else:
                 # user / system 消息
@@ -405,11 +475,11 @@ class SessionManager:
 
         return messages
 
-    def session_exists(self, session_id: str) -> bool:
+    def session_exists(self, session_id: str, user_id: str) -> bool:
         db = get_db()
         row = db.execute(
-            "SELECT 1 FROM sessions WHERE id = ?",
-            (session_id,),
+            "SELECT 1 FROM sessions WHERE id = ? AND user_id = ? AND status != 'deleted'",
+            (session_id, user_id),
         ).fetchone()
         return row is not None
 
@@ -422,15 +492,44 @@ class SessionManager:
         ).fetchone()
         return row["id"] if row else None
 
-    def get_tool_calls_by_message(self, message_id: str) -> list[ToolCallDetail]:
-        """获取指定消息下所有工具调用详情（懒加载接口使用）
+    def set_text_content_metadata(self, message_id: str, metadata: dict) -> bool:
+        """往指定消息的 text 类型 message_content 行写入 metadata
 
-        call_id 仅在同一条助手消息内唯一，需配合 message_id 定位
+        用于存储查询理解阶段的附加信息（如已识别的高校列表），
+        供后续组装查询理解 Agent 的历史消息时读取。
         """
         db = get_db()
-        rows = db.execute(
-            "SELECT call_id, message_id, tool_name, parameters, status, result FROM tool_calls WHERE message_id = ? ORDER BY created_time",
+        metadata_json = json.dumps(metadata, ensure_ascii=False)
+        cursor = db.execute(
+            "UPDATE message_contents SET metadata = ? WHERE message_id = ? AND type = 'text'",
+            (metadata_json, message_id),
+        )
+        db.commit()
+        return cursor.rowcount > 0
+
+    def get_text_content_metadata(self, message_id: str) -> Optional[dict]:
+        """读取指定消息 text 类型 message_content 行的 metadata"""
+        db = get_db()
+        row = db.execute(
+            "SELECT metadata FROM message_contents WHERE message_id = ? AND type = 'text' ORDER BY sort_order LIMIT 1",
             (message_id,),
+        ).fetchone()
+        if not row or not row["metadata"]:
+            return None
+        try:
+            return json.loads(row["metadata"])
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def get_tool_calls_by_message(self, message_id: str, user_id: str) -> list[ToolCallDetail]:
+        """获取当前用户指定消息下所有工具调用详情（懒加载接口使用）"""
+        db = get_db()
+        rows = db.execute(
+            "SELECT tc.call_id, tc.message_id, tc.tool_name, tc.parameters, tc.status, tc.result "
+            "FROM tool_calls tc JOIN messages m ON m.id = tc.message_id "
+            "JOIN sessions s ON s.id = m.session_id "
+            "WHERE tc.message_id = ? AND s.user_id = ? ORDER BY tc.created_time",
+            (message_id, user_id),
         ).fetchall()
         return [
             ToolCallDetail(

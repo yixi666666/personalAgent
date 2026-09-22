@@ -1,0 +1,21 @@
+# Python 虚拟环境
+.venv/
+
+# Python 编译缓存
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# 环境变量
+.env
+
+# 日志
+*.log
+
+# 文档和文本文件（仅保留 requirements.txt）
+*.md
+*.txt
+!requirements.txt

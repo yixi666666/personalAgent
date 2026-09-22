@@ -1,11 +1,12 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Any
 
 
 class ContentItem(BaseModel):
     """消息内容块"""
     type: str  # 'text', 'reasoning', 'tool_call', 'image', 'file'
     content: Optional[str] = None
+    metadata: Optional[Any] = None  # JSON 扩展属性，dict 或 None
     sort_order: int = 0
 
 
@@ -33,8 +34,6 @@ class MessageItem(BaseModel):
     parent_id: Optional[str] = None
     role: Optional[str] = None
     contents: list[ContentItem] = []
-    created_time: Optional[str] = None
-    updated_time: Optional[str] = None
 
 
 class SessionListResponse(BaseModel):

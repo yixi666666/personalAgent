@@ -3,10 +3,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from agent.config import get_config
-from agent.database import init_db, close_db
-from agent.routers import chat, sessions, models
+from agent.database import get_db, close_db
+from agent.routers import auth, chat, sessions, models, universities
 from agent.services.tool_manager import get_tool_manager
+from agent.services.skill_manager import get_skill_manager
 from agent.services.llm_client import get_llm_client
+from agent.services.stream_bus import get_stream_bus
 
 
 class FixedWidthFormatter(logging.Formatter):
@@ -48,25 +50,36 @@ async def lifespan(app: FastAPI):
         handler.setFormatter(FixedWidthFormatter(config.log_format, name_width=_name_width))
 
     logger = logging.getLogger(__name__)
-    logger.info("正在初始化数据库...")
-    init_db()
-    logger.info("数据库初始化完成")
+    logger.info("正在检查数据库...")
+    get_db()
+    logger.info("数据库检查完成")
 
-    logger.info("正在从toolService获取工具列表...")
+    logger.info("正在从capabilityService获取工具列表...")
     tool_manager = get_tool_manager()
     try:
         await tool_manager.refresh_tools()
-        logger.info(f"工具列表获取完成，共 {len(tool_manager._tools)} 个工具")
     except Exception as e:
-        logger.warning(f"从toolService获取工具列表失败: {e}，将在后台重试")
+        logger.warning(f"从capabilityService获取工具列表失败: {e}，将在后台重试")
 
     tool_manager.start_refresh_task()
+
+    logger.debug("正在从capabilityService获取skill列表...")
+    skill_manager = get_skill_manager()
+    try:
+        await skill_manager.refresh_skills()
+    except Exception as e:
+        logger.warning(f"从capabilityService获取skill列表失败: {e}，将在后台重试")
+
+    skill_manager.start_refresh_task()
 
     logger.info(f"智能聊天Agent系统启动 - 端口: {config.server_port}")
     yield
 
     logger.info("正在关闭服务...")
+    await get_stream_bus().shutdown()
     tool_manager.stop_refresh_task()
+    skill_manager.stop_refresh_task()
+    await skill_manager.close()
     llm_client = get_llm_client()
     await llm_client.close()
     close_db()
@@ -88,9 +101,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router, prefix="/v1", tags=["账号认证"])
 app.include_router(chat.router, prefix="/v1", tags=["对话服务"])
 app.include_router(sessions.router, prefix="/v1", tags=["会话管理"])
 app.include_router(models.router, prefix="/v1", tags=["模型管理"])
+app.include_router(universities.router, prefix="/v1", tags=["高校信息"])
 
 
 @app.get("/")

@@ -9,9 +9,6 @@ __pycache__/
 dist/
 build/
 
-# 配置文件
-config.yaml
-
 # 环境变量
 .env
 
@@ -21,8 +18,9 @@ config.yaml
 # 模型说明文档
 LLM-Introduction/
 
-# 文档和文本文件（仅保留 requirements.txt 和系统提示词）
+# 文档和文本文件（仅保留 requirements.txt）
 *.md
 *.txt
 !requirements.txt
-!system-prompt.txt
+!system-prompt-base.txt
+!tool-call-format.txt

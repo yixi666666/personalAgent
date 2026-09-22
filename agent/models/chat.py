@@ -3,7 +3,7 @@ from typing import Optional, Literal
 
 
 class ChatRequest(BaseModel):
-    model: str = Field(default="xop3qwen1b7", description="模型名称，可选: deepseek-v4-flash, Arch-Agent-3B(本地), xop3qwen1b7(星火)")
+    model: str = Field(..., description="模型名称，必须由前端指定。")
     prompt: str = Field(..., description="用户输入的提示文本")
     session_id: Optional[str] = Field(default=None, description="会话ID，为空则创建新会话")
     stream: Literal[True] = Field(default=True, description="是否流式响应，强制为True")
@@ -12,13 +12,26 @@ class ChatRequest(BaseModel):
     deep_thinking: bool = Field(default=False, description="是否开启深度思考模式（仅DeepSeek模型支持）")
 
 
+class ModelCapabilities(BaseModel):
+    deep_thinking: bool = False
+    web_search: bool = False
+    structured_output: bool = False
+    multimodal: bool = False
+    streaming: bool = True
+    stop_anytime: bool = True
+    tool_calling: bool = True
+    context_window: int = 4096
+
+
 class ModelInfo(BaseModel):
     id: str
     name: str
     description: str
     provider: str = "local"
     status: str = "available"
+    capabilities: ModelCapabilities = ModelCapabilities()
 
 
 class ModelListResponse(BaseModel):
+    default_model: Optional[str] = None
     models: list[ModelInfo]
