@@ -21,6 +21,8 @@
         </el-form-item>
         <el-button class="auth-submit" type="primary" native-type="submit" :loading="submitting">登录</el-button>
       </el-form>
+      <div class="auth-divider">免注册体验</div>
+      <el-button class="auth-guest" :loading="guestLoading" @click="guestEnter">游客登录</el-button>
       <p class="auth-switch">还没有账号？<RouterLink to="/register">立即注册</RouterLink></p>
     </el-card>
   </main>
@@ -36,6 +38,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const formRef = ref(null)
 const submitting = ref(false)
+const guestLoading = ref(false)
 const passwordManuallyEntered = ref(false)
 const form = reactive({ username: '', password: '' })
 const rules = {
@@ -56,6 +59,20 @@ async function submit() {
     if (error?.response) ElMessage.error(error.response.data?.detail || '登录失败，请检查账号和密码')
   } finally {
     submitting.value = false
+  }
+}
+
+// 游客登录：后端自动生成临时账号，无需任何输入直接进入聊天页
+async function guestEnter() {
+  if (guestLoading.value) return
+  guestLoading.value = true
+  try {
+    await authStore.guestLogin()
+    await router.replace('/chat')
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '游客登录失败，请稍后重试')
+  } finally {
+    guestLoading.value = false
   }
 }
 </script>

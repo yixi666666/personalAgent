@@ -48,6 +48,27 @@
   margin-top: 4px;
 }
 
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 12px;
+  color: #909399;
+  font-size: 12px;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e4e7ed;
+}
+
+.auth-guest {
+  width: 100%;
+}
+
 .auth-switch {
   margin-top: 20px;
   text-align: center;

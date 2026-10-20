@@ -94,6 +94,16 @@
       <el-empty v-if="chatStore.sessions.length === 0" description="暂无会话" :image-size="60" />
     </div>
 
+    <button
+      v-if="authStore.isGuest"
+      class="upgrade-entry"
+      type="button"
+      @click="emit('open-upgrade')"
+    >
+      <el-icon><EditPen /></el-icon>
+      <span>完善信息，保留账号</span>
+    </button>
+
     <div
       class="sidebar-footer"
       role="button"
@@ -116,11 +126,11 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled, Search, Bell, Setting } from '@element-plus/icons-vue'
+import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled, Search, Bell, Setting, EditPen } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 import { useAuthStore } from '../stores/auth'
 
-const emit = defineEmits(['open-inbox', 'open-search', 'open-settings'])
+const emit = defineEmits(['open-inbox', 'open-search', 'open-settings', 'open-upgrade'])
 const chatStore = useChatStore()
 const authStore = useAuthStore()
 const userName = computed(() => authStore.currentUser?.display_name || authStore.currentUser?.username || '用户')
@@ -381,6 +391,30 @@ function handlePinnedCommand() {}
   padding: 8px 16px;
   border-top: 1px solid #e4e7ed;
   cursor: pointer;
+}
+
+/* 游客常驻入口：引导完善信息以保留账号 */
+.upgrade-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  width: calc(100% - 16px);
+  margin: 6px 8px 0;
+  padding: 8px 10px;
+  border: 1px dashed #e6a23c;
+  border-radius: 8px;
+  background: #fdf6ec;
+  color: #b88230;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.upgrade-entry:hover {
+  border-color: #409eff;
+  background: #ecf5ff;
+  color: #409eff;
 }
 
 .settings-icon {

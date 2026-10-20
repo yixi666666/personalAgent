@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import secrets
 import sqlite3
 import time
 import uuid
@@ -12,6 +13,9 @@ from agent.database import get_db
 
 
 AUTH_COOKIE_NAME = "auth_session"
+
+# 游客用户名冲突时的重试次数
+GUEST_USERNAME_MAX_RETRY = 5
 
 
 def _password_hash(password: str, salt: str) -> str:
@@ -140,6 +144,100 @@ class AuthService:
         db.commit()
         updated = db.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
         return _user_dict(updated)
+
+    def create_guest(self, client_ip: Optional[str] = None) -> dict:
+        """创建游客账号：随机用户名 + 占位密码（不对外返回），role='guest'"""
+        db = get_db()
+        username = self._generate_guest_username(db)
+
+        user_id = str(uuid.uuid4())
+        settings_id = str(uuid.uuid4())
+        salt = uuid.uuid4().hex
+        # 密码仅为满足表结构的占位符，游客不可用它登录，保留账号的唯一途径是转正
+        placeholder_password = secrets.token_urlsafe(16)
+        now = int(time.time())
+        try:
+            db.execute(
+                "INSERT INTO users (id, username, password_hash, salt, avatar, display_name, email, role, status, last_login_time, last_login_ip, created_time, updated_time) "
+                "VALUES (?, ?, ?, ?, NULL, NULL, NULL, 'guest', 'active', ?, ?, ?, ?)",
+                (
+                    user_id,
+                    username,
+                    _password_hash(placeholder_password, salt),
+                    salt,
+                    now,
+                    client_ip,
+                    now,
+                    now,
+                ),
+            )
+            db.execute(
+                "INSERT INTO user_settings (id, user_id, theme, locale, created_time, updated_time) VALUES (?, ?, NULL, NULL, ?, ?)",
+                (settings_id, user_id, now, now),
+            )
+            db.commit()
+        except sqlite3.IntegrityError as exc:
+            db.rollback()
+            raise ValueError("游客账号创建失败，请重试") from exc
+        except Exception:
+            db.rollback()
+            raise
+        row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return _user_dict(row)
+
+    def upgrade(
+        self,
+        user_id: str,
+        username: str,
+        password: str,
+        email: Optional[str] = None,
+        display_name: Optional[str] = None,
+    ) -> dict:
+        """游客转正：写入真实凭据并将 role 改为 'user'，user_id 保持不变"""
+        db = get_db()
+        row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            raise PermissionError("登录状态无效")
+        if row["role"] != "guest":
+            raise ValueError("当前账号无需完善信息")
+        if db.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+            raise ValueError("用户名已存在")
+
+        # 换新 salt 重新哈希，丢弃游客期的占位密码
+        salt = uuid.uuid4().hex
+        now = int(time.time())
+        try:
+            db.execute(
+                "UPDATE users SET username = ?, password_hash = ?, salt = ?, email = ?, display_name = ?, "
+                "role = 'user', updated_time = ? WHERE id = ?",
+                (
+                    username,
+                    _password_hash(password, salt),
+                    salt,
+                    email,
+                    display_name or row["display_name"],
+                    now,
+                    user_id,
+                ),
+            )
+            db.commit()
+        except sqlite3.IntegrityError as exc:
+            db.rollback()
+            raise ValueError("用户名已存在") from exc
+        except Exception:
+            db.rollback()
+            raise
+        updated = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return _user_dict(updated)
+
+    @staticmethod
+    def _generate_guest_username(db) -> str:
+        """生成 guest_ + 6 位随机字符的用户名，重复则重试"""
+        for _ in range(GUEST_USERNAME_MAX_RETRY):
+            username = f"guest_{secrets.token_hex(3)}"
+            if not db.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+                return username
+        raise ValueError("游客账号创建失败，请重试")
 
 
 _auth_service: Optional[AuthService] = None

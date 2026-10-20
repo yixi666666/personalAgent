@@ -17,6 +17,7 @@
         @open-search="openSearchPanel"
         @open-settings="settingsVisible = true"
         @open-inbox="openInbox"
+        @open-upgrade="upgradeVisible = true"
       />
       <div
         class="panel-resize-handle left-resize-handle"
@@ -125,6 +126,17 @@
             <svg class="double-chevron collapse-icon" viewBox="0 0 24 24" aria-hidden="true">
               <polyline points="6 3.5 12 9.5 18 3.5" />
               <polyline points="6 20.5 12 14.5 18 20.5" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            title="收起高校面板"
+            aria-label="收起高校面板"
+            @click="collapseUniversityPanel"
+          >
+            <svg class="double-chevron" viewBox="0 0 24 24" aria-hidden="true">
+              <polyline points="6 6 12 12 6 18" />
+              <polyline points="12 6 18 12 12 18" />
             </svg>
           </button>
         </div>
@@ -275,6 +287,36 @@
       </div>
     </el-dialog>
 
+    <el-dialog v-model="upgradeVisible" class="upgrade-dialog" title="完善账号信息" width="440px" align-center>
+      <p class="upgrade-tip">
+        你正在以游客身份使用，关闭浏览器后本次会话将无法找回。设置账号和密码即可长期保留聊天记录。
+      </p>
+      <el-form ref="upgradeFormRef" :model="upgradeForm" :rules="upgradeRules" label-position="top">
+        <el-form-item label="账号" prop="username">
+          <el-input v-model="upgradeForm.username" autocomplete="username" placeholder="请输入账号" />
+        </el-form-item>
+        <el-form-item label="密码" prop="password">
+          <el-input
+            v-model="upgradeForm.password"
+            type="password"
+            autocomplete="new-password"
+            show-password
+            placeholder="请输入密码"
+          />
+        </el-form-item>
+        <el-form-item prop="email">
+          <template #label>
+            邮箱 <span class="upgrade-email-tip">（选填，用于账号召回）</span>
+          </template>
+          <el-input v-model="upgradeForm.email" type="email" autocomplete="email" placeholder="请输入邮箱" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="upgradeVisible = false">稍后再说</el-button>
+        <el-button type="primary" :loading="upgrading" @click="submitUpgrade">保存</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="inboxVisible" class="inbox-dialog" title="通知" width="600px" align-center @closed="selectedMail = null">
       <button v-if="!selectedMail" class="mail-item" type="button" @click="selectedMail = demoMail">
         <span class="mail-unread-dot"></span>
@@ -295,8 +337,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import SessionList from '../components/SessionList.vue'
 import ChatArea from '../components/ChatArea.vue'
 import { useChatStore } from '../stores/chat'
@@ -312,6 +355,17 @@ const searchInputRef = ref(null)
 const settingsVisible = ref(false)
 const inboxVisible = ref(false)
 const selectedMail = ref(null)
+
+// 游客转正引导：内存标记触发，每次游客登录只弹一次，叉掉后可靠侧边栏入口再次打开
+const upgradeVisible = ref(false)
+const upgrading = ref(false)
+const upgradeFormRef = ref(null)
+const upgradeForm = reactive({ username: '', password: '', email: '' })
+const upgradeRules = {
+  username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
+  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
+}
+
 const demoMail = {
   title: '我发送的更新详情',
   preview: '查看本次个人信息与偏好设置的更新内容',
@@ -844,6 +898,29 @@ async function handleSettingsLogout() {
   }
 }
 
+async function submitUpgrade() {
+  if (upgrading.value) return
+  try {
+    await upgradeFormRef.value.validate()
+  } catch {
+    return
+  }
+  upgrading.value = true
+  try {
+    const payload = { username: upgradeForm.username.trim(), password: upgradeForm.password }
+    const email = upgradeForm.email.trim()
+    if (email) payload.email = email
+    await authStore.upgrade(payload)
+    upgradeVisible.value = false
+    upgradeForm.password = ''
+    ElMessage.success('账号已完善，聊天记录已保留')
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '保存失败，请稍后重试')
+  } finally {
+    upgrading.value = false
+  }
+}
+
 function toggleUniversityPanel() {
   universityPanelCollapsed.value = !universityPanelCollapsed.value
 }
@@ -855,6 +932,12 @@ function enterUniversityFullscreen() {
 
 function exitUniversityFullscreen() {
   universityFullscreen.value = false
+}
+
+// 收起整个高校面板；全屏态下先退出全屏，避免面板隐藏后主区域仍被全屏样式遮挡
+function collapseUniversityPanel() {
+  universityFullscreen.value = false
+  universityPanelCollapsed.value = true
 }
 
 function setAllUniversityNodesExpanded(expanded) {
@@ -948,6 +1031,9 @@ function resetPanelWidth(side) {
 }
 
 onMounted(async () => {
+  if (authStore.consumeGuestLoginFlag() && authStore.isGuest) {
+    upgradeVisible.value = true
+  }
   await Promise.all([
     chatStore.loadSessions(),
     chatStore.loadModels(),
@@ -1666,6 +1752,18 @@ onBeforeUnmount(() => {
   margin: 20px 0 0;
   color: #606266;
   line-height: 1.8;
+}
+
+.upgrade-tip {
+  margin: 0 0 18px;
+  color: #909399;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.upgrade-email-tip {
+  color: #909399;
+  font-size: 12px;
 }
 
 @media (max-width: 640px) {

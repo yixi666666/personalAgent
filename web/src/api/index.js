@@ -158,6 +158,16 @@ export async function getCurrentUser() {
   return data
 }
 
+export async function guestLogin() {
+  const { data } = await api.post('/auth/guest')
+  return data
+}
+
+export async function upgradeAccount(payload) {
+  const { data } = await api.post('/auth/upgrade', payload)
+  return data
+}
+
 export async function logoutUser() {
   await api.post('/auth/logout')
 }

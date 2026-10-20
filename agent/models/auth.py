@@ -16,6 +16,15 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1)
 
 
+class UpgradeRequest(BaseModel):
+    """游客账号转正：username/password 必填，email/display_name 可选"""
+
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+    email: Optional[str] = None
+    display_name: Optional[str] = None
+
+
 class UserResponse(BaseModel):
     id: str
     username: str

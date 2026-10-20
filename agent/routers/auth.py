@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
-from agent.models.auth import LoginRequest, RegisterRequest, UserResponse
+from agent.models.auth import LoginRequest, RegisterRequest, UpgradeRequest, UserResponse
 from agent.services.auth import (
     AUTH_COOKIE_NAME,
     create_auth_cookie,
@@ -47,6 +47,38 @@ def login(payload: LoginRequest, request: Request, response: Response):
 @router.get("/auth/me", response_model=UserResponse)
 def me(current_user: dict = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/auth/guest", response_model=UserResponse)
+def guest_login(request: Request, response: Response):
+    client_ip = request.client.host if request.client else None
+    try:
+        user = get_auth_service().create_guest(client_ip)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    _set_auth_cookie(response, user["id"])
+    return user
+
+
+@router.post("/auth/upgrade", response_model=UserResponse)
+def upgrade(payload: UpgradeRequest, response: Response, current_user: dict = Depends(get_current_user)):
+    try:
+        user = get_auth_service().upgrade(
+            current_user["id"],
+            payload.username,
+            payload.password,
+            payload.email,
+            payload.display_name,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    # user_id 不变，重种 cookie 仅为保持与登录接口一致
+    _set_auth_cookie(response, user["id"])
+    return user
 
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,13 +1,23 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { getCurrentUser, loginUser, logoutUser, registerUser } from '../api'
+import {
+  getCurrentUser,
+  guestLogin as requestGuestLogin,
+  loginUser,
+  logoutUser,
+  registerUser,
+  upgradeAccount,
+} from '../api'
 
 export const useAuthStore = defineStore('auth', () => {
   const currentUser = ref(null)
   const initialized = ref(false)
   const initializing = ref(null)
+  // 内存态标记：本次会话是否刚以游客身份登录，用于触发一次性引导弹窗（刷新页面即丢失）
+  const justGuestLoggedIn = ref(false)
 
   const isAuthenticated = computed(() => Boolean(currentUser.value))
+  const isGuest = computed(() => currentUser.value?.role === 'guest')
 
   async function initialize() {
     if (initialized.value) return currentUser.value
@@ -48,7 +58,28 @@ export const useAuthStore = defineStore('auth', () => {
     } finally {
       currentUser.value = null
       initialized.value = true
+      justGuestLoggedIn.value = false
     }
+  }
+
+  async function guestLogin() {
+    currentUser.value = await requestGuestLogin()
+    initialized.value = true
+    justGuestLoggedIn.value = true
+    return currentUser.value
+  }
+
+  async function upgrade(payload) {
+    currentUser.value = await upgradeAccount(payload)
+    justGuestLoggedIn.value = false
+    return currentUser.value
+  }
+
+  // 读取并清除「刚以游客登录」标记，保证引导弹窗每次游客登录只弹一次
+  function consumeGuestLoginFlag() {
+    const flag = justGuestLoggedIn.value
+    justGuestLoggedIn.value = false
+    return flag
   }
 
   function clearCurrentUser() {
@@ -60,9 +91,14 @@ export const useAuthStore = defineStore('auth', () => {
     currentUser,
     initialized,
     isAuthenticated,
+    isGuest,
+    justGuestLoggedIn,
     initialize,
     register,
     login,
+    guestLogin,
+    upgrade,
+    consumeGuestLoginFlag,
     logout,
     clearCurrentUser,
   }
