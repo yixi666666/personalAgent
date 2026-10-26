@@ -4,6 +4,8 @@ from agent.services.auth import get_current_user
 from agent.models.session import (
     SessionListResponse,
     SessionDetailResponse,
+    SessionUpdateRequest,
+    RollbackResponse,
     ToolCallDetail,
 )
 from agent.services.session import get_session_manager
@@ -37,6 +39,32 @@ def delete_session(session_id: str, current_user: dict = Depends(get_current_use
     success = session_manager.delete_session(session_id, current_user["id"])
     if not success:
         raise HTTPException(status_code=404, detail=f"会话不存在: {session_id}")
+
+
+@router.patch("/sessions/{session_id}", status_code=204)
+def update_session(
+    session_id: str,
+    request: SessionUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """更新会话（当前支持置顶/取消置顶）"""
+    session_manager = get_session_manager()
+    success = session_manager.set_pinned(session_id, current_user["id"], request.is_pinned)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"会话不存在: {session_id}")
+
+
+@router.post("/messages/{message_id}/rollback", response_model=RollbackResponse)
+def rollback_message(message_id: str, current_user: dict = Depends(get_current_user)):
+    """回退到指定用户消息：该消息及其后所有消息软删，返回其文本供前端回填输入框"""
+    session_manager = get_session_manager()
+    result = session_manager.rollback_message(message_id, current_user["id"])
+    if not result:
+        raise HTTPException(
+            status_code=404,
+            detail="消息不存在或不可回退（仅支持回退到用户消息）",
+        )
+    return RollbackResponse(**result)
 
 
 @router.get("/tool-calls", response_model=list[ToolCallDetail])

@@ -63,6 +63,24 @@ class ChatService:
 
         return session_id, user_msg.id, created_session
 
+    async def prepare_retry(self, user_id: str, session_id: str) -> tuple[str, str, str]:
+        """重试准备：将最后一条 user 消息之后的所有 active 消息软删为 retry_del，
+        以该 user 消息为起点重新生成（含前置步骤）。
+
+        返回: (session_id, user_msg_id, user_query)
+        """
+        session_manager = get_session_manager()
+        if not session_manager.session_exists(session_id, user_id):
+            raise ValueError(f"会话不存在: {session_id}")
+
+        last_user = session_manager.get_last_user_message(session_id)
+        if last_user is None:
+            raise ValueError("会话中没有可重试的用户消息")
+
+        # 软删该 user 消息之后的所有回复（前置步骤 assistant 消息 + 最终回复）
+        session_manager.soft_delete_after(session_id, last_user["sequence"], "retry_del")
+        return session_id, last_user["id"], last_user["content"]
+
     async def _run_pre_retrieval(
         self, session_id: str, user_query: str, user_msg_id: str,
         model: str = "",

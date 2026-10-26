@@ -4,8 +4,12 @@ server:
   host: "0.0.0.0"
   port: 8004
 
+# Embedding 配置（SiliconFlow 远程 API，OpenAI 兼容接口）
 embedding:
-  model_name: "./model_cache/bge-small-zh-v1.5"
+  api_base: "https://api.siliconflow.cn/v1"
+  model_name: "BAAI/bge-large-zh-v1.5"
+  api_key: "@format {env[SILICONFLOW_API_KEY]}"
+  batch_size: 32  # 单次请求批量文本数
 
 chunking:
   chunk_size: 500

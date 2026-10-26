@@ -12,6 +12,15 @@ class ChatRequest(BaseModel):
     deep_thinking: bool = Field(default=False, description="是否开启深度思考模式（仅DeepSeek模型支持）")
 
 
+class RetryRequest(BaseModel):
+    """重试请求：软删最后一条用户消息之后的所有回复，以该用户消息为起点重新生成"""
+    model: str = Field(..., description="模型名称，必须由前端指定。")
+    session_id: str = Field(..., description="会话ID")
+    max_tokens: int = Field(default=4096, description="最大token数")
+    temperature: Optional[float] = Field(default=None, description="温度参数")
+    deep_thinking: bool = Field(default=False, description="是否开启深度思考模式（仅DeepSeek模型支持）")
+
+
 class ModelCapabilities(BaseModel):
     deep_thinking: bool = False
     web_search: bool = False

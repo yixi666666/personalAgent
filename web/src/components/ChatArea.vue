@@ -181,24 +181,12 @@
                 </svg>
               </button>
               <button
-                class="message-action-btn"
-                type="button"
-                title="在新对话中继续"
-                aria-label="在新对话中继续"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M3 12h8" />
-                  <path d="m11 12 9-8" />
-                  <path d="m11 12 9 8" />
-                  <path d="M15 4h5v5" />
-                  <path d="M15 20h5v-5" />
-                </svg>
-              </button>
-              <button
+                v-if="msg.id === lastAssistantId && !chatStore.loading"
                 class="message-action-btn"
                 type="button"
                 title="重试"
                 aria-label="重试"
+                @click="chatStore.retryLastAnswer()"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
@@ -217,6 +205,7 @@
               :offset="6"
               popper-class="rollback-popconfirm"
               width="320"
+              @confirm="onRollback(msg)"
             >
               <template #reference>
                 <button
@@ -421,6 +410,13 @@ const recommendedQuestions = [
 
 const messages = computed(() => chatStore.messages)
 const userMessages = computed(() => messages.value.filter(msg => msg.role === 'user'))
+// 最后一条助手回复的 id：重试按钮只显示在它上面
+const lastAssistantId = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    if (messages.value[i].role === 'assistant') return messages.value[i].id
+  }
+  return null
+})
 const isNewSession = computed(() => !chatStore.currentSessionId && messages.value.length === 0)
 
 const isDeepThinkModel = computed(() => {
@@ -608,6 +604,16 @@ function messageText(msg) {
 
 function setMessageFeedback(messageId, feedback) {
   messageFeedback.value[messageId] = messageFeedback.value[messageId] === feedback ? null : feedback
+}
+
+// 回退到该用户消息：软删其及之后全部消息，原文本回填输入框
+async function onRollback(msg) {
+  const content = await chatStore.rollbackToMessage(msg.id)
+  if (content !== null) {
+    inputText.value = content
+    autoResize()
+    focusInput()
+  }
 }
 
 async function copyMessage(msg) {

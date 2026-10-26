@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Any
 
 
@@ -14,9 +14,15 @@ class SessionListItem(BaseModel):
     id: str
     title: Optional[str] = None
     status: Optional[str] = None
+    is_pinned: bool = False
     created_time: Optional[str] = None
     updated_time: Optional[str] = None
     message_count: int = 0
+
+
+class SessionUpdateRequest(BaseModel):
+    """会话更新请求（置顶等）"""
+    is_pinned: bool = Field(..., description="是否置顶：true 置顶，false 取消置顶")
 
 
 class ToolCallDetail(BaseModel):
@@ -47,6 +53,14 @@ class SessionDetailResponse(BaseModel):
     id: str
     title: Optional[str] = None
     status: Optional[str] = None
+    is_pinned: bool = False
     created_time: Optional[str] = None
     updated_time: Optional[str] = None
     messages: list[MessageItem] = []
+
+
+class RollbackResponse(BaseModel):
+    """消息回退响应：content 为被回退用户消息的文本，供前端回填输入框"""
+    session_id: str
+    message_id: str
+    content: str

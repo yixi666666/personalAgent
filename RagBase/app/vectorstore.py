@@ -2,61 +2,75 @@
 
 替代原 Chroma 实现，提供向量 CRUD、向量检索、混合检索、删除等功能。
 """
-import os
 from typing import Optional
 
+from openai import OpenAI
 import weaviate
-from langchain_huggingface import HuggingFaceEmbeddings
 from weaviate.classes.data import DataObject
 from weaviate.classes.query import Filter, MetadataQuery
 
 from app.config import get_config
 from app.weaviate_client import get_collection
 
-# Windows 上禁用符号链接，避免权限问题
-os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+# ---------- Embedding（SiliconFlow 远程 API，OpenAI 兼容）----------
+
+_client: OpenAI | None = None
 
 
-# ---------- Embedding ----------
-
-_embeddings: HuggingFaceEmbeddings | None = None
-
-
-def get_embeddings() -> HuggingFaceEmbeddings:
-    global _embeddings
-    if _embeddings is None:
+def get_embeddings() -> OpenAI:
+    """获取 SiliconFlow Embedding 客户端（单例）。"""
+    global _client
+    if _client is None:
         config = get_config()
-        model_name = config["embedding"]["model_name"]
-        device = _detect_device()
-        _embeddings = HuggingFaceEmbeddings(
-            model_name=model_name,
-            model_kwargs={"device": device},
+        emb_cfg = config["embedding"]
+        api_key = emb_cfg["api_key"]
+        if not api_key:
+            raise ValueError(
+                "SiliconFlow API key 未配置，请在 RagBase/.env 中设置 SILICONFLOW_API_KEY"
+            )
+        _client = OpenAI(
+            base_url=emb_cfg["api_base"],
+            api_key=api_key,
         )
-    return _embeddings
+    return _client
 
 
-def _detect_device() -> str:
-    """检测可用设备：优先 GPU，不可用则回退 CPU。"""
-    try:
-        import torch
-        if torch.cuda.is_available():
-            device_name = torch.cuda.get_device_name(0)
-            print(f"[Embedding] 检测到 GPU: {device_name}，使用 CUDA 加速")
-            return "cuda"
-    except ImportError:
-        pass
-    print("[Embedding] 未检测到可用 GPU，使用 CPU 运行")
-    return "cpu"
+def init_embeddings() -> None:
+    """启动时初始化并校验 Embedding 配置。"""
+    get_embeddings()
+    model = get_config()["embedding"]["model_name"]
+    print(f"[Embedding] 使用 SiliconFlow 远程模型: {model}")
+
+
+def _embed(inputs: list[str]) -> list[list[float]]:
+    """调用远程 API 生成向量，自动分批请求。"""
+    config = get_config()
+    emb_cfg = config["embedding"]
+    model = emb_cfg["model_name"]
+    batch_size = int(emb_cfg.get("batch_size", 32))
+
+    client = get_embeddings()
+    vectors: list[list[float]] = []
+    for i in range(0, len(inputs), batch_size):
+        batch = inputs[i : i + batch_size]
+        resp = client.embeddings.create(model=model, input=batch)
+        # data 按 input 顺序返回，按 index 排序后依次取 embedding
+        ordered = sorted(resp.data, key=lambda item: item.index)
+        vectors.extend(item.embedding for item in ordered)
+    return vectors
 
 
 def embed_query(query: str) -> list[float]:
     """生成查询文本的向量。"""
-    return get_embeddings().embed_query(query)
+    return _embed([query])[0]
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """批量生成文本向量。"""
-    return get_embeddings().embed_documents(texts)
+    if not texts:
+        return []
+    return _embed(texts)
 
 
 # ---------- 过滤条件构造 ----------

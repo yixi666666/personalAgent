@@ -9,6 +9,13 @@ database:
   path: "./data/chatAgent.sqlite"
   echo: false
 
+# Embedding 配置（SiliconFlow 远程 API，OpenAI 兼容接口）
+embedding:
+  api_base: "https://api.siliconflow.cn/v1"
+  model_name: "BAAI/bge-large-zh-v1.5"
+  api_key: "@format {env[SILICONFLOW_API_KEY]}"
+  batch_size: 32  # 单次请求批量文本数
+
 logging:
   level: "DEBUG"
   format: "%(asctime)s - %(name)-20s - %(levelname)s - %(message)s"
@@ -18,7 +25,7 @@ capabilityservice:
   refresh_interval: 300
   call_timeout: 60
 
-default_model: "gpt-5.6-sol"
+default_model: "glm-4.7-flash"
 
 providers:
   deepseek:

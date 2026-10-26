@@ -143,6 +143,25 @@ export function attachChatStream(streamId, handlers = {}) {
   )
 }
 
+export function retryChatStream(
+  sessionId,
+  model = 'glm-4.7-flash',
+  deepThinking = false,
+  handlers = {},
+) {
+  const payload = { session_id: sessionId, model, deep_thinking: deepThinking }
+  return createSseStream(
+    signal => fetch('/v1/chat/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'include',
+      signal,
+    }),
+    handlers,
+  )
+}
+
 export async function registerUser(payload) {
   const { data } = await api.post('/auth/register', payload)
   return data
@@ -189,6 +208,15 @@ export async function getSession(sessionId) {
 
 export async function deleteSession(sessionId) {
   await api.delete(`/sessions/${sessionId}`)
+}
+
+export async function pinSession(sessionId, pinned) {
+  await api.patch(`/sessions/${sessionId}`, { is_pinned: pinned })
+}
+
+export async function rollbackMessage(messageId) {
+  const { data } = await api.post(`/messages/${messageId}/rollback`)
+  return data
 }
 
 export async function getToolCalls(messageId) {

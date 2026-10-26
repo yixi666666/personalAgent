@@ -6,15 +6,15 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.routes import router
-from app.vectorstore import get_embeddings
+from app.vectorstore import init_embeddings
 from app.weaviate_client import close_client, init_client
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """服务启动时初始化 Embedding 模型和 Weaviate 客户端。"""
-    # 初始化 Embedding 模型（加载 bge-small-zh）
-    get_embeddings()
+    """服务启动时初始化 Embedding 客户端和 Weaviate 客户端。"""
+    # 初始化 Embedding（SiliconFlow 远程 API，仅校验配置）
+    init_embeddings()
     # 初始化 Weaviate 客户端并创建 Chunk collection（如果不存在）
     init_client()
     yield

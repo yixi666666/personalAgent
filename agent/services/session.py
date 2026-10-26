@@ -71,6 +71,15 @@ def _format_display_time(ts: Optional[int]) -> Optional[str]:
 
 
 class SessionManager:
+    def _next_sequence(self, session_id: str) -> int:
+        """获取会话内下一个消息序号：从 1 开始单调递增，作为唯一排序依据"""
+        db = get_db()
+        row = db.execute(
+            "SELECT MAX(sequence) AS max_seq FROM messages WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        return (row["max_seq"] or 0) + 1
+
     def create_session(self, user_id: str, prompt: str = "") -> dict:
         """创建会话，标题取自首条用户消息 prompt 的前 15 个字符"""
         session_id = str(uuid.uuid4())
@@ -105,8 +114,8 @@ class SessionManager:
         now = _utc_now()
         db = get_db()
         db.execute(
-            "INSERT INTO messages (id, session_id, parent_id, role, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?)",
-            (msg_id, session_id, parent_id, role, now, now),
+            "INSERT INTO messages (id, session_id, parent_id, sequence, role, status, created_time, updated_time) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)",
+            (msg_id, session_id, parent_id, self._next_sequence(session_id), role, now, now),
         )
         contents = []
         sort_order = 0
@@ -158,8 +167,8 @@ class SessionManager:
         db = get_db()
         # 1. 插入 messages 记录
         db.execute(
-            "INSERT INTO messages (id, session_id, parent_id, role, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?)",
-            (msg_id, session_id, parent_id, "assistant", now, now),
+            "INSERT INTO messages (id, session_id, parent_id, sequence, role, status, created_time, updated_time) VALUES (?, ?, ?, ?, 'assistant', 'active', ?, ?)",
+            (msg_id, session_id, parent_id, self._next_sequence(session_id), now, now),
         )
         # 2. 插入 message_contents 记录
         sort_order = 0
@@ -276,7 +285,7 @@ class SessionManager:
         if not session_row:
             return None
         msg_rows = db.execute(
-            "SELECT * FROM messages WHERE session_id = ? ORDER BY created_time",
+            "SELECT * FROM messages WHERE session_id = ? AND status = 'active' ORDER BY sequence",
             (session_id,),
         ).fetchall()
         messages = []
@@ -322,6 +331,7 @@ class SessionManager:
             id=session_row["id"],
             title=session_row["title"],
             status=session_row["status"],
+            is_pinned=session_row["is_pinned"] == 1,
             created_time=_format_display_time(session_row["created_time"]),
             updated_time=_format_display_time(session_row["updated_time"]),
             messages=messages,
@@ -337,8 +347,9 @@ class SessionManager:
         ).fetchone()
         total = total_row["cnt"]
         rows = db.execute(
-            "SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as message_count "
-            "FROM sessions s WHERE s.user_id = ? AND s.status != 'deleted' ORDER BY s.updated_time DESC LIMIT ? OFFSET ?",
+            "SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.status = 'active') as message_count "
+            "FROM sessions s WHERE s.user_id = ? AND s.status != 'deleted' "
+            "ORDER BY CASE WHEN s.is_pinned = 1 THEN 0 ELSE 1 END, s.updated_time DESC LIMIT ? OFFSET ?",
             (user_id, limit, offset),
         ).fetchall()
         sessions = [
@@ -346,6 +357,7 @@ class SessionManager:
                 id=row["id"],
                 title=row["title"],
                 status=row["status"],
+                is_pinned=row["is_pinned"] == 1,
                 created_time=_format_display_time(row["created_time"]),
                 updated_time=_format_display_time(row["updated_time"]),
                 message_count=row["message_count"],
@@ -387,7 +399,7 @@ class SessionManager:
         """
         db = get_db()
         rows = db.execute(
-            "SELECT id, role, parent_id FROM messages WHERE session_id = ? ORDER BY created_time",
+            "SELECT id, role, parent_id FROM messages WHERE session_id = ? AND status = 'active' ORDER BY sequence",
             (session_id,),
         ).fetchall()
 
@@ -475,6 +487,82 @@ class SessionManager:
 
         return messages
 
+    def set_pinned(self, session_id: str, user_id: str, pinned: bool) -> bool:
+        """设置/取消会话置顶。置顶写 1，取消写 0。不更新 updated_time（置顶不改变时间序）"""
+        db = get_db()
+        cursor = db.execute(
+            "UPDATE sessions SET is_pinned = ? WHERE id = ? AND user_id = ? AND status != 'deleted'",
+            (1 if pinned else 0, session_id, user_id),
+        )
+        db.commit()
+        return cursor.rowcount > 0
+
+    def get_last_user_message(self, session_id: str) -> Optional[dict]:
+        """获取最后一条 active 的 user 消息（id + sequence + 文本内容），供重试定位"""
+        db = get_db()
+        row = db.execute(
+            "SELECT id, sequence FROM messages WHERE session_id = ? AND role = 'user' AND status = 'active' ORDER BY sequence DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "sequence": row["sequence"],
+            "content": self.get_message_text(row["id"]),
+        }
+
+    def get_message_text(self, message_id: str) -> str:
+        """拼接指定消息的全部 text 类型内容块文本"""
+        db = get_db()
+        rows = db.execute(
+            "SELECT content FROM message_contents WHERE message_id = ? AND type = 'text' ORDER BY sort_order",
+            (message_id,),
+        ).fetchall()
+        return "\n".join(r["content"] for r in rows if r["content"])
+
+    def soft_delete_after(self, session_id: str, sequence: int, status: str) -> int:
+        """软删指定序号之后的所有 active 消息（重试场景），返回受影响行数"""
+        return self._soft_delete_messages(session_id, sequence, status, include_self=False)
+
+    def _soft_delete_messages(self, session_id: str, sequence: int, status: str, include_self: bool) -> int:
+        """软删指定序号之后（或含本身）的所有 active 消息，返回受影响行数"""
+        op = ">=" if include_self else ">"
+        now = _utc_now()
+        db = get_db()
+        cursor = db.execute(
+            f"UPDATE messages SET status = ?, updated_time = ? WHERE session_id = ? AND status = 'active' AND sequence {op} ?",
+            (status, now, session_id, sequence),
+        )
+        db.execute(
+            "UPDATE sessions SET updated_time = ? WHERE id = ?",
+            (now, session_id),
+        )
+        db.commit()
+        return cursor.rowcount
+
+    def rollback_message(self, message_id: str, user_id: str) -> Optional[dict]:
+        """回退到指定用户消息：该消息及其后所有 active 消息软删为 rollback_del
+
+        返回 {session_id, message_id, content}，content 为该 user 消息文本，供前端回填输入框。
+        消息不存在、不属于当前用户或角色不是 user 时返回 None。
+        """
+        db = get_db()
+        row = db.execute(
+            "SELECT m.id, m.session_id, m.sequence, m.role FROM messages m "
+            "JOIN sessions s ON s.id = m.session_id "
+            "WHERE m.id = ? AND s.user_id = ? AND m.status = 'active'",
+            (message_id, user_id),
+        ).fetchone()
+        if not row or row["role"] != "user":
+            return None
+        self._soft_delete_messages(row["session_id"], row["sequence"], "rollback_del", include_self=True)
+        return {
+            "session_id": row["session_id"],
+            "message_id": row["id"],
+            "content": self.get_message_text(row["id"]),
+        }
+
     def session_exists(self, session_id: str, user_id: str) -> bool:
         db = get_db()
         row = db.execute(
@@ -484,10 +572,10 @@ class SessionManager:
         return row is not None
 
     def get_last_message_id(self, session_id: str) -> Optional[str]:
-        """获取会话中最后一条消息的 ID，用于 parent_id 关联"""
+        """获取会话中最后一条 active 消息的 ID，用于 parent_id 关联"""
         db = get_db()
         row = db.execute(
-            "SELECT id FROM messages WHERE session_id = ? ORDER BY created_time DESC LIMIT 1",
+            "SELECT id FROM messages WHERE session_id = ? AND status = 'active' ORDER BY sequence DESC LIMIT 1",
             (session_id,),
         ).fetchone()
         return row["id"] if row else None

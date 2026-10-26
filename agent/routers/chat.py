@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from agent.services.auth import get_current_user
 from fastapi.responses import StreamingResponse
 
-from agent.models.chat import ChatRequest
+from agent.models.chat import ChatRequest, RetryRequest
 from agent.services.chat_service import get_chat_service
 from agent.services.stream_bus import DONE, get_stream_bus
 
@@ -50,6 +50,13 @@ def _format_sse_event(event: dict) -> str | None:
         payload = {"tool_calls": event["tool_calls"]}
     elif event_type == "tool_results":
         payload = {"tool_results": event["tool_results"]}
+    elif event_type == "message_saved":
+        payload = {
+            "message_saved": {
+                "role": event["role"],
+                "message_id": event["message_id"],
+            }
+        }
     elif event_type == "error":
         payload = {"error": event["error"]}
     elif event_type == "finish":
@@ -128,6 +135,8 @@ async def chat_completions(request: ChatRequest, current_user: dict = Depends(ge
         if created_session:
             session_event["session"] = created_session
         yield session_event
+        # 下发 user 消息真实 id，前端用它替换本地 temp 占位（供回退等按 id 的操作使用）
+        yield {"type": "message_saved", "role": "user", "message_id": user_msg_id}
 
         async for event in chat_service.stream_chat(
             session_id=session_id,
@@ -148,6 +157,52 @@ async def chat_completions(request: ChatRequest, current_user: dict = Depends(ge
     )
     return StreamingResponse(
         _subscribe_generator(user_msg_id, current_user["id"]),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+@router.post("/chat/retry")
+async def chat_retry(request: RetryRequest, current_user: dict = Depends(get_current_user)):
+    """重试：软删最后一条用户消息之后的所有回复，以该用户消息为起点重新生成（SSE 流式）"""
+    bus = get_stream_bus()
+    if bus.active_stream_for_session(request.session_id, current_user["id"]):
+        return _error_response("当前会话正在处理上一条消息，请等待完成后再发送")
+
+    chat_service = get_chat_service()
+    try:
+        session_id, user_msg_id, user_query = await chat_service.prepare_retry(
+            user_id=current_user["id"],
+            session_id=request.session_id,
+        )
+    except Exception as exc:
+        logger.exception("准备重试失败")
+        return _error_response(str(exc))
+
+    async def pipeline() -> AsyncGenerator[dict, None]:
+        yield {"type": "session", "session_id": session_id}
+        # 重试不重新入库 user 消息，这里把已有的真实 id 下发给前端
+        yield {"type": "message_saved", "role": "user", "message_id": user_msg_id}
+        async for event in chat_service.stream_chat(
+            session_id=session_id,
+            user_query=user_query,
+            user_msg_id=user_msg_id,
+            model=request.model,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            deep_thinking=request.deep_thinking,
+        ):
+            yield event
+
+    stream_id = str(uuid.uuid4())
+    bus.start_stream(
+        session_id=session_id,
+        stream_id=stream_id,
+        user_id=current_user["id"],
+        pipeline=pipeline(),
+    )
+    return StreamingResponse(
+        _subscribe_generator(stream_id, current_user["id"]),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )

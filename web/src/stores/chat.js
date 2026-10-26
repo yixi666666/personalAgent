@@ -10,6 +10,9 @@ import {
   listModels,
   listSessions,
   listTools,
+  pinSession,
+  retryChatStream,
+  rollbackMessage,
 } from '../api'
 
 let activeStreamHandle = null
@@ -184,6 +187,7 @@ export const useChatStore = defineStore('chat', () => {
       id: detail.id,
       title: detail.title,
       status: detail.status,
+      is_pinned: !!detail.is_pinned,
       created_time: detail.created_time,
       updated_time: detail.updated_time,
       display_time: detail.updated_time || detail.created_time || '',
@@ -323,6 +327,71 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /** 置顶/取消置顶会话，本地同步排序（置顶在前，其余按更新时间倒序，与后端一致） */
+  async function togglePin(sessionId, pinned) {
+    try {
+      await pinSession(sessionId, pinned)
+      const item = sessions.value.find(s => s.id === sessionId)
+      if (item) item.is_pinned = pinned
+      sessions.value.sort((a, b) => {
+        if (!!a.is_pinned !== !!b.is_pinned) return a.is_pinned ? -1 : 1
+        return (b.display_time || '').localeCompare(a.display_time || '')
+      })
+    } catch (err) {
+      console.error('置顶操作失败:', err)
+    }
+  }
+
+  /**
+   * 重试：后端软删最后一条用户消息之后的所有回复并重新生成
+   * 本地裁剪掉最后一条 user 消息之后的所有气泡，再以流式占位渲染新回复
+   */
+  async function retryLastAnswer() {
+    if (loading.value || !currentSessionId.value || !currentModel.value) return
+    abortActiveStream()
+    let lastUserIdx = -1
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      if (messages.value[i].role === 'user') { lastUserIdx = i; break }
+    }
+    if (lastUserIdx === -1) return
+    messages.value = messages.value.slice(0, lastUserIdx + 1)
+    const assistantIdx = beginStreamingPlaceholder()
+    const handlers = createStreamHandlers(assistantIdx)
+    const handle = retryChatStream(
+      currentSessionId.value,
+      currentModel.value,
+      deepThinking.value,
+      handlers,
+    )
+    activeStreamHandle = handle
+    try {
+      await handle.promise
+    } catch (err) {
+      handlers.onError(`请求失败: ${err.message || '未知错误'}`)
+    } finally {
+      if (activeStreamHandle === handle) activeStreamHandle = null
+    }
+  }
+
+  /**
+   * 回退到指定用户消息：后端软删该消息及其后所有消息，
+   * 返回被回退用户消息的文本（供回填输入框），失败返回 null
+   */
+  async function rollbackToMessage(messageId) {
+    if (loading.value) return null
+    abortActiveStream()
+    try {
+      const data = await rollbackMessage(messageId)
+      const idx = messages.value.findIndex(m => m.id === messageId)
+      if (idx !== -1) messages.value = messages.value.slice(0, idx)
+      touchCurrentSession()
+      return data.content || ''
+    } catch (err) {
+      console.error('回退失败:', err)
+      return null
+    }
+  }
+
   function abortActiveStream() {
     streamGeneration += 1
     activeStreamHandle?.abort()
@@ -444,6 +513,16 @@ export const useChatStore = defineStore('chat', () => {
           localStorage.setItem('currentSessionId', chunk.session_id)
         }
         setStage(1, '高校识别...')
+      }
+      // 后端下发 user 消息真实 id：原地替换最后一个 temp 占位（供回退等按 id 的操作使用）
+      if (chunk.message_saved?.role === 'user' && chunk.message_saved.message_id) {
+        for (let i = messages.value.length - 1; i >= 0; i--) {
+          const m = messages.value[i]
+          if (m.role === 'user' && String(m.id).startsWith('temp_')) {
+            m.id = chunk.message_saved.message_id
+            break
+          }
+        }
       }
       const blocks = messages.value[assistantIdx].blocks
       if (chunk.reasoning_delta?.content) {
@@ -733,6 +812,9 @@ export const useChatStore = defineStore('chat', () => {
     newSession,
     selectSession,
     sendMessage,
+    togglePin,
+    retryLastAnswer,
+    rollbackToMessage,
     loadToolCallDetail,
     loadModels: loadModelsData,
     loadTools: loadToolsData,

@@ -19,11 +19,13 @@
     </div>
 
     <div ref="listRef" class="session-list scrollable" @scroll="handleScroll">
-      <div class="session-group-label">置顶</div>
+      <div v-if="pinnedSessions.length" class="session-group-label">置顶</div>
       <div
         v-for="p in pinnedSessions"
         :key="p.id"
         class="session-item pinned"
+        :class="{ active: p.id === chatStore.currentSessionId }"
+        @click="chatStore.selectSession(p.id)"
       >
         <el-icon class="session-icon pinned-icon"><StarFilled /></el-icon>
         <div class="session-info">
@@ -33,7 +35,7 @@
           class="session-menu"
           trigger="click"
           placement="bottom-end"
-          @command="handlePinnedCommand"
+          @command="command => handlePinnedCommand(command, p.id)"
         >
           <el-button class="more-btn" text size="small" @click.stop>
             <el-icon><MoreFilled /></el-icon>
@@ -159,10 +161,8 @@ async function fillViewport() {
 onMounted(fillViewport)
 watch(() => chatStore.sessions.length, fillViewport)
 
-// 置顶会话：当前为前端写死的占位数据，后续接入后端后替换
-const pinnedSessions = [
-  { id: 'pinned-1', title: '2026 高考志愿方案咨询' },
-]
+// 置顶会话（后端 is_pinned 字段驱动，列表已按置顶优先排序）
+const pinnedSessions = computed(() => chatStore.sessions.filter(s => s.is_pinned))
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -182,6 +182,7 @@ const sessionGroups = computed(() => {
     { key: 'older', label: '更早', items: [] },
   ]
   for (const s of chatStore.sessions) {
+    if (s.is_pinned) continue
     const t = sessionTimeMs(s)
     const age = t === null ? Infinity : now - t
     if (age <= 7 * DAY_MS) groups[0].items.push(s)
@@ -192,12 +193,15 @@ const sessionGroups = computed(() => {
 })
 
 function handleSessionCommand(command, sessionId) {
-  if (command === 'delete') chatStore.removeSession(sessionId)
-  // command === 'pin'：置顶功能待接入，暂不处理
+  if (command === 'pin') chatStore.togglePin(sessionId, true)
+  else if (command === 'delete') chatStore.removeSession(sessionId)
 }
 
-// 置顶条目菜单（取消置顶/删除）：当前只放按钮，功能待接入
-function handlePinnedCommand() {}
+// 置顶条目菜单（取消置顶/删除）
+function handlePinnedCommand(command, sessionId) {
+  if (command === 'unpin') chatStore.togglePin(sessionId, false)
+  else if (command === 'delete') chatStore.removeSession(sessionId)
+}
 </script>
 
 <style scoped>
@@ -337,11 +341,7 @@ function handlePinnedCommand() {}
 }
 
 .session-item.pinned {
-  cursor: default;
-}
-
-.session-item.pinned:hover {
-  background: transparent;
+  cursor: pointer;
 }
 
 .pinned-icon {
