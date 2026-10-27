@@ -10,9 +10,12 @@ from typing import Optional
 import numpy as np
 from openai import OpenAI
 
-from agent.config import get_config
+from agent.services.model_service import get_embedding_provider
 
 logger = logging.getLogger(__name__)
+
+# 单次请求批量文本数（性能参数，非模型配置）
+EMBEDDING_BATCH_SIZE = 32
 
 
 class EmbeddingService:
@@ -24,15 +27,19 @@ class EmbeddingService:
 
     def _get_client(self) -> OpenAI:
         if self._client is None:
-            emb_cfg = get_config().get("embedding", {})
-            api_key = emb_cfg.get("api_key")
+            provider = get_embedding_provider()
+            api_key = provider.get("api_key")
             if not api_key:
                 raise ValueError(
-                    "SiliconFlow API key 未配置，请在 agent/.env 中设置 SILICONFLOW_API_KEY"
+                    "embedding 模型 api_key 未配置或解密失败，请检查 models_configs 表"
                 )
-            self._model = emb_cfg["model_name"]
+            self._model = provider["name"]
+            full_base_url = (
+                provider["base_url"].rstrip("/")
+                + provider.get("api_prefix", "").rstrip("/")
+            )
             self._client = OpenAI(
-                base_url=emb_cfg["api_base"],
+                base_url=full_base_url,
                 api_key=api_key,
             )
         return self._client
@@ -43,8 +50,7 @@ class EmbeddingService:
         数据库中的存量向量（sentence_transformers normalize_embeddings=True）
         均为 L2 归一化格式，这里对 API 返回向量统一归一化对齐（幂等操作）。
         """
-        emb_cfg = get_config().get("embedding", {})
-        batch_size = int(emb_cfg.get("batch_size", 32))
+        batch_size = EMBEDDING_BATCH_SIZE
 
         client = self._get_client()
         vectors: list[list[float]] = []

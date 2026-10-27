@@ -15,10 +15,10 @@ from typing import Optional
 
 import numpy as np
 
-from agent.config import get_config
 from agent.database import get_db
 from agent.services.embedding_service import get_embedding_service
 from agent.services.llm_client import get_llm_client
+from agent.services.model_service import get_default_model, resolve_chat_provider
 
 logger = logging.getLogger(__name__)
 
@@ -240,10 +240,9 @@ class QueryUnderstandingService:
 
         每次调用的 HTTP 请求 body 完整日志打印
         """
-        config = get_config()
         if not model:
-            model = config.default_model
-        provider = config.resolve_model_provider(model)
+            model = get_default_model()
+        provider = resolve_chat_provider(model)
 
         llm_client = get_llm_client()
 

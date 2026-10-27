@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Any
 
+from agent.models.feedback import FeedbackState
+
 
 class ContentItem(BaseModel):
     """消息内容块"""
@@ -40,6 +42,7 @@ class MessageItem(BaseModel):
     parent_id: Optional[str] = None
     role: Optional[str] = None
     contents: list[ContentItem] = []
+    feedback: Optional[FeedbackState] = None  # 当前用户对助手消息的反馈（点赞/拉踩）
 
 
 class SessionListResponse(BaseModel):

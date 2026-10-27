@@ -156,11 +156,11 @@
             <template v-if="msg.role === 'assistant'">
               <button
                 class="message-action-btn"
-                :class="{ active: messageFeedback[msg.id] === 'like' }"
+                :class="{ active: feedbackType(msg.id) === 'like' }"
                 type="button"
                 title="喜欢"
-                :aria-pressed="messageFeedback[msg.id] === 'like'"
-                @click="setMessageFeedback(msg.id, 'like')"
+                :aria-pressed="feedbackType(msg.id) === 'like'"
+                @click="onLikeClick(msg.id)"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path class="thumb-cuff" d="M7 10v12H3V10h4Z" />
@@ -169,11 +169,11 @@
               </button>
               <button
                 class="message-action-btn"
-                :class="{ active: messageFeedback[msg.id] === 'dislike' }"
+                :class="{ active: feedbackType(msg.id) === 'dislike' }"
                 type="button"
                 title="不喜欢"
-                :aria-pressed="messageFeedback[msg.id] === 'dislike'"
-                @click="setMessageFeedback(msg.id, 'dislike')"
+                :aria-pressed="feedbackType(msg.id) === 'dislike'"
+                @click="onDislikeClick(msg.id)"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path class="thumb-cuff" d="M7 14V2H3v12h4Z" />
@@ -332,6 +332,40 @@
       </div>
     </div>
     </div>
+
+    <!-- 拉踩原因弹窗：屏幕正中央模态 -->
+    <el-dialog
+      :model-value="feedbackPanelMessageId !== null"
+      width="420px"
+      align-center
+      append-to-body
+      class="feedback-dialog"
+      @close="closeFeedbackPanel"
+    >
+      <template #header>
+        <span class="feedback-panel-title">哪里不满意？</span>
+      </template>
+      <el-checkbox-group v-model="feedbackPanelReasons" class="feedback-panel-reasons">
+        <el-checkbox v-for="r in chatStore.dislikeReasons" :key="r.code" :value="r.code">
+          {{ r.label }}
+        </el-checkbox>
+      </el-checkbox-group>
+      <el-input
+        v-model="feedbackPanelComment"
+        type="textarea"
+        :rows="2"
+        maxlength="200"
+        show-word-limit
+        placeholder="补充说明（可选）"
+      />
+      <template #footer>
+        <div class="feedback-panel-actions">
+          <span class="feedback-panel-spacer"></span>
+          <el-button size="small" @click="closeFeedbackPanel">取消</el-button>
+          <el-button size="small" type="primary" @click="onSubmitDislike(feedbackPanelMessageId)">提交</el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -371,7 +405,10 @@ const inputRef = ref(null)
 const isUserAtBottom = ref(true)
 const todoExpanded = ref(['todo'])
 const copiedMessageId = ref(null)
-const messageFeedback = ref({})
+// 拉踩原因面板：当前打开面板的消息ID + 面板内编辑中的原因/备注
+const feedbackPanelMessageId = ref(null)
+const feedbackPanelReasons = ref([])
+const feedbackPanelComment = ref('')
 const collapseExpandedByMessage = ref({})
 const dotListVisible = ref(false)
 const dotPrioritized = ref(false)
@@ -602,8 +639,43 @@ function messageText(msg) {
     .trim()
 }
 
-function setMessageFeedback(messageId, feedback) {
-  messageFeedback.value[messageId] = messageFeedback.value[messageId] === feedback ? null : feedback
+/** 当前用户对某消息的反馈类型：'like' | 'dislike' | null */
+function feedbackType(messageId) {
+  return chatStore.feedbacks[messageId]?.feedback_type || null
+}
+
+/** 点赞：未点赞则提交，已点赞则撤销（toggle） */
+async function onLikeClick(messageId) {
+  if (feedbackType(messageId) === 'like') {
+    await chatStore.revokeFeedback(messageId)
+  } else {
+    await chatStore.submitFeedback(messageId, 'like')
+  }
+}
+
+/** 拉踩：已激活则直接撤销（toggle），未激活则打开原因面板 */
+async function onDislikeClick(messageId) {
+  if (feedbackType(messageId) === 'dislike') {
+    await chatStore.revokeFeedback(messageId)
+    return
+  }
+  const current = chatStore.feedbacks[messageId]
+  feedbackPanelMessageId.value = messageId
+  feedbackPanelReasons.value = current?.feedback_type === 'dislike' ? [...(current.reason_codes || [])] : []
+  feedbackPanelComment.value = current?.feedback_type === 'dislike' ? (current.comment || '') : ''
+  chatStore.loadDislikeReasons()
+}
+
+function closeFeedbackPanel() {
+  feedbackPanelMessageId.value = null
+  feedbackPanelReasons.value = []
+  feedbackPanelComment.value = ''
+}
+
+/** 提交拉踩反馈（原因与备注可选） */
+async function onSubmitDislike(messageId) {
+  const ok = await chatStore.submitFeedback(messageId, 'dislike', feedbackPanelReasons.value, feedbackPanelComment.value)
+  if (ok) closeFeedbackPanel()
 }
 
 // 回退到该用户消息：软删其及之后全部消息，原文本回填输入框
@@ -1053,6 +1125,36 @@ onBeforeUnmount(() => {
   border-color: #dcdfe6 !important;
 }
 
+/* 拉踩原因弹窗（el-dialog append-to-body 挂在 body 下，需全局样式） */
+:global(.feedback-panel-title) {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+
+:global(.feedback-panel-reasons) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 4px;
+  margin-bottom: 10px;
+}
+
+:global(.feedback-panel-reasons .el-checkbox) {
+  margin-right: 0;
+  height: 26px;
+}
+
+:global(.feedback-panel-actions) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+:global(.feedback-panel-spacer) {
+  flex: 1;
+}
+
 .message-action-btn {
   display: inline-flex;
   align-items: center;
@@ -1061,15 +1163,17 @@ onBeforeUnmount(() => {
   height: 24px;
   padding: 0;
   border: 0;
+  border-radius: 6px;
   background: transparent;
   color: #79bbff;
   font-size: 16px;
   cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .message-action-btn:hover {
-  color: #66b1ff;
-  background: transparent;
+  color: #409eff;
+  background: rgba(64, 158, 255, 0.12);
 }
 
 .copy-message-btn {
@@ -1078,11 +1182,16 @@ onBeforeUnmount(() => {
 
 .copy-message-btn:hover {
   color: #337ecc;
+  background: rgba(64, 158, 255, 0.12);
 }
 
 .message-action-btn.active {
   color: #409eff;
-  background: transparent;
+  background: rgba(64, 158, 255, 0.18);
+}
+
+.message-action-btn.active:hover {
+  background: rgba(64, 158, 255, 0.28);
 }
 
 .message-action-btn svg {

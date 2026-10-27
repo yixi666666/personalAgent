@@ -9,6 +9,7 @@ from agent.services.tool_manager import get_tool_manager
 from agent.services.query_understanding import get_query_understanding_service
 from agent.services.recall_agent import get_recall_agent_service
 from agent.config import get_config
+from agent.services.model_service import resolve_chat_provider
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +236,7 @@ class ChatService:
         3. 工具调用循环：stream=true 流式 / stream=false 非流式，最多 max_tool_rounds 轮
         """
         config = get_config()
-        provider = config.resolve_model_provider(model)
+        provider = resolve_chat_provider(model)
         supports_tools = provider.get("supports_tools", True)
         max_tool_rounds = config.max_tool_rounds
 
@@ -472,7 +473,7 @@ class ChatService:
                         self._build_reasoning_metadata(usage_data, finish_reason)
                         if full_reasoning else None
                     )
-                    session_manager.add_message(
+                    assistant_msg = session_manager.add_message(
                         session_id=session_id,
                         role="assistant",
                         content=full_content,
@@ -480,6 +481,8 @@ class ChatService:
                         reasoning_content=full_reasoning,
                         reasoning_metadata=reasoning_metadata,
                     )
+                    # 下发 assistant 消息真实 id，前端替换流式占位 id（供点赞/拉踩按消息定位）
+                    yield {"type": "message_saved", "role": "assistant", "message_id": assistant_msg.id}
 
                 yield {"type": "finish", "finish_reason": finish_reason}
                 return
@@ -501,7 +504,7 @@ class ChatService:
                 self._build_reasoning_metadata(usage_data, "stop")
                 if full_reasoning else None
             )
-            session_manager.add_message(
+            assistant_msg = session_manager.add_message(
                 session_id=session_id,
                 role="assistant",
                 content=full_content,
@@ -509,6 +512,8 @@ class ChatService:
                 reasoning_content=full_reasoning,
                 reasoning_metadata=reasoning_metadata,
             )
+            # 下发 assistant 消息真实 id，前端替换流式占位 id（供点赞/拉踩按消息定位）
+            yield {"type": "message_saved", "role": "assistant", "message_id": assistant_msg.id}
         yield {"type": "finish", "finish_reason": "stop"}
 
     # ------------------------------------------------------------------

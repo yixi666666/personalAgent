@@ -4,7 +4,7 @@ from typing import Optional, AsyncGenerator
 
 from openai import AsyncOpenAI, APIStatusError, APIConnectionError
 
-from agent.config import get_config
+from agent.services.model_service import resolve_chat_provider
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +34,7 @@ class LLMClient:
         self._clients.clear()
 
     def _resolve_provider(self, model: str) -> dict:
-        config = get_config()
-        return config.resolve_model_provider(model)
+        return resolve_chat_provider(model)
 
     def _build_extra_body(self, provider: dict, stream: bool, deep_thinking: bool = False) -> dict:
         """构建各模型提供商的扩展请求参数"""

@@ -17,9 +17,9 @@ import logging
 import os
 from typing import Optional
 
-from agent.config import get_config
 from agent.services.llm_client import get_llm_client
 from agent.services.retrieval import get_retrieval_service, RetrievalService
+from agent.services.model_service import get_default_model, resolve_chat_provider
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +54,9 @@ class RecallAgentService:
 
     async def _call_llm(self, messages: list[dict], round_num: int = 1, model: str = "") -> dict:
         """调用召回 Agent LLM，返回解析后的 JSON"""
-        config = get_config()
         if not model:
-            model = config.default_model
-        provider = config.resolve_model_provider(model)
+            model = get_default_model()
+        provider = resolve_chat_provider(model)
 
         llm_client = get_llm_client()
 

@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter
 from agent.models.chat import ModelListResponse, ModelInfo, ModelCapabilities
-from agent.config import get_config
+from agent.services.model_service import get_chat_providers, get_default_model
 
 logger = logging.getLogger(__name__)
 
@@ -10,9 +10,8 @@ router = APIRouter()
 
 @router.get("/models", response_model=ModelListResponse)
 def list_models():
-    config = get_config()
     models = []
-    for provider in config.get_all_model_providers():
+    for provider in get_chat_providers():
         models.append(
             ModelInfo(
                 id=provider["name"],
@@ -33,7 +32,7 @@ def list_models():
             )
         )
     model_ids = {model.id for model in models}
-    default_model = config.default_model
+    default_model = get_default_model()
     if default_model not in model_ids:
         if default_model:
             logger.error("默认模型不存在于模型列表中: %s", default_model)

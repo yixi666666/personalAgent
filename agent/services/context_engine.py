@@ -6,7 +6,7 @@ from typing import Optional
 import tiktoken
 
 from agent.services.session import get_session_manager
-from agent.config import get_config
+from agent.services.model_service import resolve_chat_provider
 
 logger = logging.getLogger(__name__)
 
@@ -359,8 +359,7 @@ class ContextEngine:
         model: str,
         tool_schemas: list[dict] | None = None,
     ) -> list[dict]:
-        config = get_config()
-        provider = config.resolve_model_provider(model)
+        provider = resolve_chat_provider(model)
         supports_tools = provider.get("supports_tools", True)
 
         # 1. 构建系统提示词

@@ -5,14 +5,17 @@ import {
   chatCompletionsStream,
   deleteSession,
   getActiveStream,
+  getFeedbackReasons,
   getSession,
   getToolCalls,
   listModels,
   listSessions,
   listTools,
   pinSession,
+  revokeFeedback,
   retryChatStream,
   rollbackMessage,
+  submitFeedback,
 } from '../api'
 
 let activeStreamHandle = null
@@ -41,6 +44,10 @@ export const useChatStore = defineStore('chat', () => {
   const selectedUniversity = ref(null)
   const universitySelectSeq = ref(0)
   const processingStage = ref('')
+  // 消息反馈：{ [message_id]: { feedback_type, reason_codes, comment } }，仅含当前生效记录
+  const feedbacks = ref({})
+  // 拉踩原因字典（来自 feedback_reasons，feedback_type 含 dislike 与 all）
+  const dislikeReasons = ref([])
 
   const sessionsHasMore = computed(() => sessionsOffset.value < sessionsTotal.value)
 
@@ -300,6 +307,18 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       messages.value = processed
+      // 回显当前用户对助手消息的反馈（点赞/拉踩）
+      const feedbackMap = {}
+      for (const m of rawMessages) {
+        if (m.feedback && m.feedback.feedback_type) {
+          feedbackMap[m.id] = {
+            feedback_type: m.feedback.feedback_type,
+            reason_codes: m.feedback.reason_codes || [],
+            comment: m.feedback.comment || '',
+          }
+        }
+      }
+      feedbacks.value = feedbackMap
       localStorage.setItem('currentSessionId', sessionId)
       await tryResumeActiveStream(sessionId)
     } catch (err) {
@@ -524,6 +543,13 @@ export const useChatStore = defineStore('chat', () => {
           }
         }
       }
+      // 后端下发 assistant 消息真实 id：替换流式占位 id（供点赞/拉踩按消息定位）
+      if (chunk.message_saved?.role === 'assistant' && chunk.message_saved.message_id) {
+        const assistant = messages.value[assistantIdx]
+        if (assistant && String(assistant.id).startsWith('temp_')) {
+          assistant.id = chunk.message_saved.message_id
+        }
+      }
       const blocks = messages.value[assistantIdx].blocks
       if (chunk.reasoning_delta?.content) {
         setStage(3, '思考中...')
@@ -647,6 +673,7 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
     selectedUniversity.value = null
     universitySelectSeq.value = 0
+    feedbacks.value = {}
     localStorage.removeItem('currentSessionId')
   }
 
@@ -655,6 +682,7 @@ export const useChatStore = defineStore('chat', () => {
     resetStreamingState()
     currentSessionId.value = null
     messages.value = []
+    feedbacks.value = {}
     localStorage.removeItem('currentSessionId')
   }
 
@@ -744,6 +772,50 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /** 拉取拉踩原因字典（幂等，失败时不影响反馈主流程） */
+  async function loadDislikeReasons() {
+    if (dislikeReasons.value.length > 0) return
+    try {
+      const data = await getFeedbackReasons('dislike')
+      dislikeReasons.value = data.reasons || []
+    } catch (err) {
+      console.error('加载反馈原因失败:', err)
+    }
+  }
+
+  /** 提交反馈（点赞/拉踩），成功后更新本地反馈表 */
+  async function submitFeedbackAction(messageId, feedbackType, reasonCodes = [], comment = '') {
+    try {
+      const data = await submitFeedback(messageId, feedbackType, reasonCodes, comment)
+      feedbacks.value = {
+        ...feedbacks.value,
+        [messageId]: {
+          feedback_type: data.feedback_type,
+          reason_codes: data.reason_codes || [],
+          comment: data.comment || '',
+        },
+      }
+      return true
+    } catch (err) {
+      console.error('提交反馈失败:', err)
+      return false
+    }
+  }
+
+  /** 撤销反馈，成功后从本地反馈表移除 */
+  async function revokeFeedbackAction(messageId) {
+    try {
+      await revokeFeedback(messageId)
+      const next = { ...feedbacks.value }
+      delete next[messageId]
+      feedbacks.value = next
+      return true
+    } catch (err) {
+      console.error('撤销反馈失败:', err)
+      return false
+    }
+  }
+
   /**
    * 懒加载：用户点击工具符号时，按 message_id 请求工具详情并更新对应 block
    * messageId 是 tool_call 所属的原始消息ID（通过 block._messageId 传递）
@@ -805,6 +877,8 @@ export const useChatStore = defineStore('chat', () => {
     selectedUniversity,
     universitySelectSeq,
     processingStage,
+    feedbacks,
+    dislikeReasons,
     loadSessions: loadSessionsData,
     loadMoreSessions,
     loadSession: loadSessionData,
@@ -816,6 +890,9 @@ export const useChatStore = defineStore('chat', () => {
     retryLastAnswer,
     rollbackToMessage,
     loadToolCallDetail,
+    loadDislikeReasons,
+    submitFeedback: submitFeedbackAction,
+    revokeFeedback: revokeFeedbackAction,
     loadModels: loadModelsData,
     loadTools: loadToolsData,
     clearUserData,

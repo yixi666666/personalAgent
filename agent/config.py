@@ -95,44 +95,6 @@ class Config:
     def tool_call_timeout(self) -> int:
         return _settings.get("capabilityservice", {}).get("call_timeout", 10)
 
-    @property
-    def default_model(self) -> Optional[str]:
-        return _settings.get("default_model")
-
-    @property
-    def providers(self) -> dict:
-        return _settings.get("providers", {})
-
-    def get_all_model_providers(self) -> list[dict]:
-        result = []
-        for provider_name, provider_cfg in self.providers.items():
-            result.append({
-                "provider": provider_name,
-                "name": provider_cfg.get("name", ""),
-                "display_name": provider_cfg.get("display_name", provider_name),
-                "base_url": provider_cfg.get("base_url", ""),
-                "api_prefix": provider_cfg.get("api_prefix", "/v1"),
-                "max_tokens": provider_cfg.get("max_tokens", 2048),
-                "temperature": provider_cfg.get("temperature", 0.7),
-                "api_key": provider_cfg.get("api_key"),
-                "supports_tools": provider_cfg.get("supports_tools", True),
-                "deep_thinking": provider_cfg.get("deep_thinking", False),
-                "web_search": provider_cfg.get("web_search", False),
-                "structured_output": provider_cfg.get("structured_output", False),
-                "multimodal": provider_cfg.get("multimodal", False),
-                "streaming": provider_cfg.get("streaming", True),
-                "stop_anytime": provider_cfg.get("stop_anytime", True),
-                "context_window": provider_cfg.get("context_window", 4096),
-            })
-        return result
-
-    def resolve_model_provider(self, model_name: str) -> dict:
-        providers = self.get_all_model_providers()
-        for mp in providers:
-            if mp["name"] == model_name:
-                return mp
-        raise ValueError(f"未找到模型提供者: {model_name}")
-
     def get(self, key: str, default: Any = None) -> Any:
         return _settings.get(key, default)
 

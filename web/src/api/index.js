@@ -224,6 +224,27 @@ export async function getToolCalls(messageId) {
   return data
 }
 
+export async function getFeedbackReasons(feedbackType) {
+  const { data } = await api.get('/feedbacks/reasons', {
+    params: feedbackType ? { feedback_type: feedbackType } : {},
+  })
+  return data
+}
+
+export async function submitFeedback(messageId, feedbackType, reasonCodes = [], comment = '') {
+  const { data } = await api.put('/feedbacks', {
+    message_id: messageId,
+    feedback_type: feedbackType,
+    reason_codes: reasonCodes,
+    comment,
+  })
+  return data
+}
+
+export async function revokeFeedback(messageId) {
+  await api.delete(`/feedbacks/${messageId}`)
+}
+
 export async function listModels() {
   const { data } = await api.get('/models')
   return data

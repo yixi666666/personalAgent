@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from agent.database import get_db
+from agent.services.feedback import get_feedback_manager
 from agent.models.session import (
     SessionListItem,
     SessionDetailResponse,
@@ -288,6 +289,8 @@ class SessionManager:
             "SELECT * FROM messages WHERE session_id = ? AND status = 'active' ORDER BY sequence",
             (session_id,),
         ).fetchall()
+        # 批量查询当前用户对这些消息的 active 反馈（点赞/拉踩回显）
+        feedbacks = get_feedback_manager().get_active_feedbacks(user_id, [row["id"] for row in msg_rows])
         messages = []
         for row in msg_rows:
             # 从 message_contents 表读取内容块
@@ -325,6 +328,7 @@ class SessionManager:
                 parent_id=row["parent_id"],
                 role=row["role"],
                 contents=contents,
+                feedback=feedbacks.get(row["id"]),
             )
             messages.append(msg_item)
         return SessionDetailResponse(
