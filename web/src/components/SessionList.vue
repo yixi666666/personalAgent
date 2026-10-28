@@ -4,8 +4,18 @@
       <div class="sidebar-brand">
         <span class="sidebar-brand-name">小忆</span>
         <div class="sidebar-brand-actions">
-          <button class="header-icon-btn" type="button" title="通知" aria-label="通知" @click="emit('open-inbox')">
+          <button
+            class="header-icon-btn"
+            type="button"
+            :title="`主题：${themeModeLabel}（点击切换）`"
+            aria-label="主题"
+            @click="cycleTheme"
+          >
+            <el-icon><Sunny v-if="themeMode === 'light'" /><Moon v-else-if="themeMode === 'dark'" /><Monitor v-else /></el-icon>
+          </button>
+          <button class="header-icon-btn inbox-btn" type="button" title="通知" aria-label="通知" @click="emit('open-inbox')">
             <el-icon><Bell /></el-icon>
+            <span v-if="unreadCount > 0" class="inbox-badge">{{ unreadCount > 99 ? '99+' : unreadCount }}</span>
           </button>
           <button class="header-icon-btn" type="button" title="搜索会话" aria-label="搜索会话" @click="emit('open-search')">
             <el-icon><Search /></el-icon>
@@ -128,11 +138,14 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled, Search, Bell, Setting, EditPen } from '@element-plus/icons-vue'
+import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled, Search, Bell, Setting, EditPen, Sunny, Moon, Monitor } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 import { useAuthStore } from '../stores/auth'
 
 const emit = defineEmits(['open-inbox', 'open-search', 'open-settings', 'open-upgrade'])
+defineProps({
+  unreadCount: { type: Number, default: 0 },
+})
 const chatStore = useChatStore()
 const authStore = useAuthStore()
 const userName = computed(() => authStore.currentUser?.display_name || authStore.currentUser?.username || '用户')
@@ -141,6 +154,17 @@ const userInitial = computed(() => Array.from(userName.value)[0] || '用')
 const listRef = ref(null)
 // 距底部多少像素时触发加载下一页
 const LOAD_MORE_THRESHOLD = 60
+
+// 主题模式三态循环（仅按钮状态，主题功能待实现）：跟随系统 → 浅色 → 深色
+const themeModes = ['auto', 'light', 'dark']
+const themeModeLabels = { auto: '跟随系统', light: '浅色', dark: '深色' }
+const themeMode = ref('auto')
+const themeModeLabel = computed(() => themeModeLabels[themeMode.value])
+
+function cycleTheme() {
+  const idx = themeModes.indexOf(themeMode.value)
+  themeMode.value = themeModes[(idx + 1) % themeModes.length]
+}
 
 function handleScroll(event) {
   const el = event.target
@@ -260,6 +284,31 @@ function handlePinnedCommand(command, sessionId) {
   color: #409eff;
 }
 
+.header-icon-btn:focus-visible {
+  outline: 2px solid #409eff;
+  outline-offset: 1px;
+}
+
+.inbox-btn {
+  position: relative;
+}
+
+.inbox-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #f56c6c;
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  box-sizing: border-box;
+}
+
 .new-chat-btn {
   width: 100%;
 }
@@ -374,10 +423,6 @@ function handlePinnedCommand(command, sessionId) {
 
 .session-item.active:hover .more-btn {
   background: #d9ecff;
-}
-
-.session-item.pinned:hover .more-btn {
-  background: #f5f7fa;
 }
 
 .more-btn:hover {

@@ -14,6 +14,7 @@
       @mouseleave="handleSidebarLeave"
     >
       <SessionList
+        :unread-count="unreadCount"
         @open-search="openSearchPanel"
         @open-settings="settingsVisible = true"
         @open-inbox="openInbox"
@@ -261,29 +262,53 @@
       </div>
     </el-dialog>
 
-    <el-dialog v-model="settingsVisible" class="settings-dialog" title="设置" width="600px" align-center>
-      <div class="settings-list">
-        <button class="settings-item" type="button">
-          <span>
-            <strong>个人信息</strong>
-            <small>修改头像、昵称和个人资料</small>
-          </span>
+    <el-dialog
+      v-model="settingsVisible"
+      class="settings-dialog"
+      :title="settingsView === 'profile' ? '个人信息' : '设置'"
+      width="600px"
+      align-center
+    >
+      <div v-if="settingsView === 'main'" class="settings-list">
+        <button class="settings-item" type="button" @click="settingsView = 'profile'">
+          <strong>个人信息</strong>
           <span class="settings-arrow">›</span>
         </button>
-        <button class="settings-item" type="button">
-          <span>
-            <strong>主题</strong>
-            <small>切换浅色、深色或跟随系统</small>
-          </span>
+        <button class="settings-item" type="button" @click="handleShortcutsClick">
+          <strong>快捷键设置</strong>
           <span class="settings-arrow">›</span>
         </button>
         <button class="settings-item settings-item-danger" type="button" @click="handleSettingsLogout">
-          <span>
-            <strong>退出登录</strong>
-            <small>退出当前账号并返回登录页</small>
-          </span>
+          <strong>退出登录</strong>
           <span class="settings-arrow">›</span>
         </button>
+      </div>
+
+      <div v-else class="profile-panel">
+        <button class="profile-back" type="button" @click="settingsView = 'main'">‹ 返回设置</button>
+        <div class="profile-hero">
+          <span class="profile-avatar">{{ profileInitial }}</span>
+          <div class="profile-hero-text">
+            <strong>{{ profileForm.display_name || profileForm.username || '用户' }}</strong>
+            <small>@{{ profileForm.username || 'guest' }}</small>
+          </div>
+          <span class="profile-role">{{ profileRoleLabel }}</span>
+        </div>
+        <el-form label-position="top" class="profile-form">
+          <el-form-item label="用户名">
+            <el-input v-model="profileForm.username" disabled />
+          </el-form-item>
+          <el-form-item label="显示名称">
+            <el-input v-model="profileForm.display_name" placeholder="设置你的显示名称" />
+          </el-form-item>
+          <el-form-item label="邮箱">
+            <el-input v-model="profileForm.email" placeholder="绑定邮箱" />
+          </el-form-item>
+        </el-form>
+        <div class="profile-actions">
+          <el-button @click="settingsView = 'main'">取消</el-button>
+          <el-button type="primary" @click="handleSaveProfile">保存</el-button>
+        </div>
       </div>
     </el-dialog>
 
@@ -317,20 +342,38 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="inboxVisible" class="inbox-dialog" title="通知" width="600px" align-center @closed="selectedMail = null">
-      <button v-if="!selectedMail" class="mail-item" type="button" @click="selectedMail = demoMail">
-        <span class="mail-unread-dot"></span>
-        <span class="mail-summary">
-          <strong>{{ demoMail.title }}</strong>
-          <small>{{ demoMail.preview }}</small>
-        </span>
-        <time>{{ demoMail.time }}</time>
-      </button>
+    <el-dialog v-model="inboxVisible" class="inbox-dialog" title="通知" width="600px" align-center @closed="selectedAnnouncement = null">
+      <div v-if="announcementsLoading" class="inbox-empty">加载中...</div>
+      <div v-else-if="!selectedAnnouncement && announcements.length === 0" class="inbox-empty">暂无通知</div>
+      <template v-else-if="!selectedAnnouncement">
+        <button
+          v-for="item in announcements"
+          :key="item.id"
+          class="mail-item"
+          :class="{ 'is-read': item.is_read }"
+          type="button"
+          @click="openAnnouncement(item)"
+        >
+          <span v-if="!item.is_read" class="mail-unread-dot"></span>
+          <span v-else class="mail-read-placeholder"></span>
+          <span class="mail-summary">
+            <strong>
+              <span v-if="item.is_pinned" class="mail-pin-tag">置顶</span>
+              {{ item.title }}
+            </strong>
+            <small>{{ summarizeAnnouncement(item.content) }}</small>
+          </span>
+          <time>{{ formatAnnouncementTime(item.publish_time || item.created_time) }}</time>
+        </button>
+      </template>
       <article v-else class="mail-detail">
-        <button class="mail-back" type="button" @click="selectedMail = null">‹ 返回</button>
-        <h3>{{ selectedMail.title }}</h3>
-        <div class="mail-meta">来自：{{ selectedMail.sender }} · {{ selectedMail.time }}</div>
-        <p>{{ selectedMail.content }}</p>
+        <button class="mail-back" type="button" @click="selectedAnnouncement = null">‹ 返回</button>
+        <h3>
+          <span v-if="selectedAnnouncement.is_pinned" class="mail-pin-tag">置顶</span>
+          {{ selectedAnnouncement.title }}
+        </h3>
+        <div class="mail-meta">发布时间：{{ formatAnnouncementTime(selectedAnnouncement.publish_time || selectedAnnouncement.created_time) }}</div>
+        <div class="mail-body" v-html="renderAnnouncement(selectedAnnouncement.content)"></div>
       </article>
     </el-dialog>
   </div>
@@ -344,7 +387,7 @@ import SessionList from '../components/SessionList.vue'
 import ChatArea from '../components/ChatArea.vue'
 import { useChatStore } from '../stores/chat'
 import { useAuthStore } from '../stores/auth'
-import { getUniversity } from '../api'
+import { getUniversity, listAnnouncements, getUnreadAnnouncementCount, markAnnouncementRead } from '../api'
 
 const router = useRouter()
 const chatStore = useChatStore()
@@ -353,8 +396,37 @@ const searchVisible = ref(false)
 const searchKeyword = ref('')
 const searchInputRef = ref(null)
 const settingsVisible = ref(false)
+// 设置弹窗视图：'main' 主列表 | 'profile' 个人信息面板
+const settingsView = ref('main')
+const profileForm = reactive({ username: '', display_name: '', email: '' })
+const profileRoleLabels = { guest: '游客', user: '普通用户', admin: '管理员', super_admin: '超级管理员' }
+const profileRoleLabel = computed(() => profileRoleLabels[authStore.currentUser?.role] || '用户')
+const profileInitial = computed(() => {
+  const name = profileForm.display_name || profileForm.username || '用户'
+  return Array.from(name)[0].toUpperCase()
+})
+
+watch(settingsVisible, (visible) => {
+  if (!visible) return
+  settingsView.value = 'main'
+  const user = authStore.currentUser || {}
+  profileForm.username = user.username || ''
+  profileForm.display_name = user.display_name || ''
+  profileForm.email = user.email || ''
+})
+
+function handleShortcutsClick() {
+  ElMessage.info('快捷键设置开发中，敬请期待')
+}
+
+function handleSaveProfile() {
+  ElMessage.info('保存接口暂未接入，当前为前端演示')
+}
 const inboxVisible = ref(false)
-const selectedMail = ref(null)
+const announcements = ref([])
+const unreadCount = ref(0)
+const announcementsLoading = ref(false)
+const selectedAnnouncement = ref(null)
 
 // 游客转正引导：内存标记触发，每次游客登录只弹一次，叉掉后可靠侧边栏入口再次打开
 const upgradeVisible = ref(false)
@@ -366,13 +438,73 @@ const upgradeRules = {
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
-const demoMail = {
-  title: '我发送的更新详情',
-  preview: '查看本次个人信息与偏好设置的更新内容',
-  sender: '小忆',
-  time: '刚刚',
-  content: '你的更新请求已经记录。这里将展示个人信息、主题偏好等设置的更新详情。',
+import MarkdownIt from 'markdown-it'
+
+// 公告 Markdown 渲染：html 关闭防 XSS，链接新窗口打开；图片走 Markdown 语法并自适应宽度
+const announcementMd = new MarkdownIt({ html: false, linkify: true, breaks: true })
+const defaultLinkOpen = announcementMd.renderer.rules.link_open
+  || ((tokens, idx, options, env, self) => self.renderToken(tokens, idx, options))
+announcementMd.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  tokens[idx].attrSet('target', '_blank')
+  tokens[idx].attrSet('rel', 'noopener noreferrer')
+  return defaultLinkOpen(tokens, idx, options, env, self)
 }
+
+function renderAnnouncement(content) {
+  return announcementMd.render(content || '')
+}
+
+// 列表摘要：纯文本单行截断，图片语法折叠为占位符
+function summarizeAnnouncement(content) {
+  return (content || '').replace(/!\[[^\]]*\]\([^)]*\)/g, '[图片]')
+}
+
+// 公告时间展示：今天显示 HH:MM，今年显示 MM-DD，更早显示完整日期
+function formatAnnouncementTime(timestamp) {
+  if (!timestamp) return ''
+  const d = new Date(timestamp * 1000)
+  const now = new Date()
+  const pad = n => String(n).padStart(2, '0')
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  if (d.toDateString() === now.toDateString()) return hm
+  if (d.getFullYear() === now.getFullYear()) return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+async function loadUnreadCount() {
+  try {
+    const data = await getUnreadAnnouncementCount()
+    unreadCount.value = data.unread_count || 0
+  } catch {
+    // 红点拉取失败静默处理，不影响主流程
+  }
+}
+
+async function loadAnnouncements() {
+  announcementsLoading.value = true
+  try {
+    const data = await listAnnouncements()
+    announcements.value = data.announcements || []
+    unreadCount.value = data.unread_count || 0
+  } catch {
+    ElMessage.error('公告加载失败')
+  } finally {
+    announcementsLoading.value = false
+  }
+}
+
+async function openAnnouncement(item) {
+  selectedAnnouncement.value = item
+  if (item.is_read) return
+  try {
+    await markAnnouncementRead(item.id)
+    item.is_read = true
+    unreadCount.value = Math.max(0, unreadCount.value - 1)
+  } catch {
+    // 已读上报失败不阻断详情展示，下次打开会重试
+  }
+}
+
 const sidebarCollapsed = ref(false)
 const sidebarPreview = ref(false)
 const edgeHovered = ref(false)
@@ -884,8 +1016,9 @@ function focusSearchInput() {
 }
 
 function openInbox() {
-  selectedMail.value = null
+  selectedAnnouncement.value = null
   inboxVisible.value = true
+  loadAnnouncements()
 }
 
 async function handleSettingsLogout() {
@@ -1037,7 +1170,8 @@ onMounted(async () => {
   await Promise.all([
     chatStore.loadSessions(),
     chatStore.loadModels(),
-    chatStore.loadTools()
+    chatStore.loadTools(),
+    loadUnreadCount()
   ])
   const savedSessionId = localStorage.getItem('currentSessionId')
   if (savedSessionId && chatStore.sessions.some(session => session.id === savedSessionId)) {
@@ -1669,26 +1803,105 @@ onBeforeUnmount(() => {
   background: #fef0f0;
 }
 
-.settings-item-danger small,
 .settings-item-danger .settings-arrow {
   color: #f56c6c;
 }
 
-.settings-item > span:first-child {
-  display: grid;
-  gap: 6px;
-}
-
-.settings-item strong,
 .mail-summary strong {
   font-size: 14px;
   font-weight: 600;
 }
 
-.settings-item small,
 .mail-summary small {
   color: #909399;
   font-size: 12px;
+}
+
+/* 个人信息面板 */
+.profile-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.profile-back {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  padding: 4px 8px;
+  margin: -4px 0 8px -8px;
+  color: #909399;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.profile-back:hover {
+  color: #409eff;
+  background: #ecf5ff;
+}
+
+.profile-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #e4e7ed;
+  border-radius: 12px;
+  background: #f8f9fb;
+}
+
+.profile-avatar {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #409eff, #7b5cff);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.profile-hero-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.profile-hero-text strong {
+  font-size: 16px;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-hero-text small {
+  color: #909399;
+  font-size: 12px;
+}
+
+.profile-role {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ecf5ff;
+  color: #409eff;
+  font-size: 12px;
+}
+
+.profile-form {
+  margin-top: 16px;
+}
+
+.profile-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .settings-arrow {
@@ -1723,10 +1936,46 @@ onBeforeUnmount(() => {
   background: #409eff;
 }
 
+.mail-read-placeholder {
+  width: 8px;
+  height: 8px;
+}
+
+.mail-item.is-read .mail-summary strong {
+  font-weight: normal;
+  color: #909399;
+}
+
+.mail-pin-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #ecf5ff;
+  color: #409eff;
+  font-size: 12px;
+  font-weight: normal;
+}
+
+.inbox-empty {
+  padding: 32px 0;
+  text-align: center;
+  color: #909399;
+  font-size: 14px;
+}
+
 .mail-summary {
   display: grid;
   gap: 6px;
   min-width: 0;
+}
+
+/* 列表项正文单行截断，全文在详情页查看 */
+.mail-summary small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mail-item time,
@@ -1752,6 +2001,75 @@ onBeforeUnmount(() => {
   margin: 20px 0 0;
   color: #606266;
   line-height: 1.8;
+}
+
+/* 公告正文 Markdown 排版：段落、图片、列表、代码块 */
+.mail-body {
+  margin-top: 20px;
+  color: #606266;
+  font-size: 14px;
+  line-height: 1.8;
+  word-break: break-word;
+}
+
+.mail-body p {
+  margin: 0 0 12px;
+}
+
+.mail-body p:last-child {
+  margin-bottom: 0;
+}
+
+.mail-body img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+.mail-body ul,
+.mail-body ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.mail-body h1,
+.mail-body h2,
+.mail-body h3,
+.mail-body h4 {
+  margin: 16px 0 8px;
+  color: #303133;
+  font-size: 16px;
+}
+
+.mail-body code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f5f7fa;
+  font-size: 13px;
+}
+
+.mail-body pre {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f5f7fa;
+  overflow-x: auto;
+}
+
+.mail-body pre code {
+  padding: 0;
+  background: none;
+}
+
+.mail-body blockquote {
+  margin: 0 0 12px;
+  padding-left: 12px;
+  border-left: 3px solid #dcdfe6;
+  color: #909399;
+}
+
+.mail-body a {
+  color: #409eff;
+  text-decoration: none;
 }
 
 .upgrade-tip {

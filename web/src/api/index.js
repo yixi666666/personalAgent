@@ -259,3 +259,17 @@ export async function getUniversity(name) {
   const { data } = await api.get('/universities', { params: { name } })
   return data
 }
+
+export async function listAnnouncements() {
+  const { data } = await api.get('/announcements')
+  return data
+}
+
+export async function getUnreadAnnouncementCount() {
+  const { data } = await api.get('/announcements/unread-count')
+  return data
+}
+
+export async function markAnnouncementRead(announcementId) {
+  await api.post(`/announcements/${announcementId}/read`)
+}

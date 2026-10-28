@@ -492,11 +492,11 @@ class SessionManager:
         return messages
 
     def set_pinned(self, session_id: str, user_id: str, pinned: bool) -> bool:
-        """设置/取消会话置顶。置顶写 1，取消写 0。不更新 updated_time（置顶不改变时间序）"""
+        """设置/取消会话置顶。置顶写 1，取消写 0。同时刷新 updated_time（置顶算一次更新，影响同级时间序）"""
         db = get_db()
         cursor = db.execute(
-            "UPDATE sessions SET is_pinned = ? WHERE id = ? AND user_id = ? AND status != 'deleted'",
-            (1 if pinned else 0, session_id, user_id),
+            "UPDATE sessions SET is_pinned = ?, updated_time = ? WHERE id = ? AND user_id = ? AND status != 'deleted'",
+            (1 if pinned else 0, _utc_now(), session_id, user_id),
         )
         db.commit()
         return cursor.rowcount > 0

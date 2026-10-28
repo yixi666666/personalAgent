@@ -346,12 +346,20 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  /** 置顶/取消置顶会话，本地同步排序（置顶在前，其余按更新时间倒序，与后端一致） */
+  /** 置顶/取消置顶会话，本地同步排序（置顶在前，其余按更新时间倒序，与后端一致；置顶算一次更新） */
   async function togglePin(sessionId, pinned) {
     try {
       await pinSession(sessionId, pinned)
       const item = sessions.value.find(s => s.id === sessionId)
-      if (item) item.is_pinned = pinned
+      if (item) {
+        item.is_pinned = pinned
+        // 后端置顶会刷新 updated_time，本地同步为当前时间（本地时区 UTC+8，与后端 display_time 格式一致）
+        const d = new Date()
+        const pad = n => String(n).padStart(2, '0')
+        const now = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+        item.updated_time = now
+        item.display_time = now
+      }
       sessions.value.sort((a, b) => {
         if (!!a.is_pinned !== !!b.is_pinned) return a.is_pinned ? -1 : 1
         return (b.display_time || '').localeCompare(a.display_time || '')
