@@ -93,7 +93,7 @@ class Config:
 
     @property
     def tool_call_timeout(self) -> int:
-        return _settings.get("capabilityservice", {}).get("call_timeout", 10)
+        return _settings.get("capabilityservice", {}).get("call_timeout", 60)
 
     def get(self, key: str, default: Any = None) -> Any:
         return _settings.get(key, default)

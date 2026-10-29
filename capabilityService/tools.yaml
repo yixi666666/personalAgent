@@ -13,6 +13,10 @@ internal_tools:
     handler: capabilityService.tools.rag_search.RagSearchTool
   - name: todo_write
     handler: capabilityService.tools.todo_write.TodoWriteTool
+  - name: web_search
+    handler: capabilityService.tools.web_search.WebSearchTool
+  - name: web_fetch
+    handler: capabilityService.tools.web_fetch.WebFetchTool
 
 # ============================================================
 # 本地 MCP 工具：配置启动命令和参数，工具服务以子进程方式管理

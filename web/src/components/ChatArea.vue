@@ -87,7 +87,7 @@
                       @before-enter="onToolSymbolClick(msg, part)"
                     >
                       <template #reference>
-                        <span class="tool-symbol" :title="part.toolCall.function?.name || part.toolCall.id">🔧</span>
+                        <span class="tool-symbol" :data-tip="part.toolCall.function?.name || part.toolCall.id">🔧</span>
                       </template>
                       <div class="tool-popover-content">
                         <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
@@ -120,7 +120,7 @@
                     @before-enter="onToolSymbolClick(msg, part)"
                   >
                     <template #reference>
-                      <span class="tool-symbol" :title="part.toolCall.function?.name || part.toolCall.id">🔧</span>
+                      <span class="tool-symbol" :data-tip="part.toolCall.function?.name || part.toolCall.id">🔧</span>
                     </template>
                     <div class="tool-popover-content">
                       <div class="tool-popover-row"><span class="tp-label">名称:</span>{{ part.toolCall.function?.name || part.toolCall.id }}</div>
@@ -1268,6 +1268,7 @@ onBeforeUnmount(() => {
 /* 内联工具符号 */
 .tool-symbol {
   display: inline;
+  position: relative;
   cursor: pointer;
   font-size: 14px;
   vertical-align: baseline;
@@ -1279,6 +1280,32 @@ onBeforeUnmount(() => {
 
 .tool-symbol:hover {
   background: rgba(64, 158, 255, 0.15);
+}
+
+/* 悬浮即时显示工具名（纯 CSS 实现，无延迟；浅色样式同原生提示） */
+.tool-symbol::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  color: #303133;
+  border: 1px solid #dcdfe6;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+  z-index: 2000;
+}
+
+.tool-symbol:hover::after {
+  opacity: 1;
 }
 
 /* Popover 内容 */
