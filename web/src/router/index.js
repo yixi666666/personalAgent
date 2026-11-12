@@ -29,6 +29,12 @@ const router = createRouter({
       component: () => import('../views/ChatView.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('../views/AdminView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
@@ -43,6 +49,9 @@ router.beforeEach(async to => {
 
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
     return { name: 'login' }
+  }
+  if (to.meta.requiresAdmin && !['admin', 'super_admin'].includes(authStore.currentUser?.role)) {
+    return { name: 'chat' }
   }
   if (to.meta.guestOnly && authStore.isAuthenticated) {
     return { name: 'chat' }

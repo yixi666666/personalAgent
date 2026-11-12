@@ -19,6 +19,7 @@
         @open-settings="settingsVisible = true"
         @open-inbox="openInbox"
         @open-upgrade="upgradeVisible = true"
+        @open-admin="goAdmin"
       />
       <div
         class="panel-resize-handle left-resize-handle"
@@ -274,6 +275,10 @@
           <strong>个人信息</strong>
           <span class="settings-arrow">›</span>
         </button>
+        <button v-if="isAdminRole" class="settings-item" type="button" @click="goAdmin">
+          <strong>管理控制台</strong>
+          <span class="settings-arrow">›</span>
+        </button>
         <button class="settings-item" type="button" @click="handleShortcutsClick">
           <strong>快捷键设置</strong>
           <span class="settings-arrow">›</span>
@@ -401,6 +406,12 @@ const settingsView = ref('main')
 const profileForm = reactive({ username: '', display_name: '', email: '' })
 const profileRoleLabels = { guest: '游客', user: '普通用户', admin: '管理员', super_admin: '超级管理员' }
 const profileRoleLabel = computed(() => profileRoleLabels[authStore.currentUser?.role] || '用户')
+const isAdminRole = computed(() => ['admin', 'super_admin'].includes(authStore.currentUser?.role))
+
+function goAdmin() {
+  settingsVisible.value = false
+  router.push('/admin')
+}
 const profileInitial = computed(() => {
   const name = profileForm.display_name || profileForm.username || '用户'
   return Array.from(name)[0].toUpperCase()

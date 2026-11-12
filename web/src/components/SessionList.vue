@@ -5,6 +5,16 @@
         <span class="sidebar-brand-name">小忆</span>
         <div class="sidebar-brand-actions">
           <button
+            v-if="isAdminRole"
+            class="header-icon-btn"
+            type="button"
+            title="管理控制台"
+            aria-label="管理控制台"
+            @click="emit('open-admin')"
+          >
+            <el-icon><Tools /></el-icon>
+          </button>
+          <button
             class="header-icon-btn"
             type="button"
             :title="`主题：${themeModeLabel}（点击切换）`"
@@ -138,11 +148,11 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled, Search, Bell, Setting, EditPen, Sunny, Moon, Monitor } from '@element-plus/icons-vue'
+import { Plus, Delete, ChatDotRound, MoreFilled, Star, StarFilled, Search, Bell, Setting, EditPen, Sunny, Moon, Monitor, Tools } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 import { useAuthStore } from '../stores/auth'
 
-const emit = defineEmits(['open-inbox', 'open-search', 'open-settings', 'open-upgrade'])
+const emit = defineEmits(['open-inbox', 'open-search', 'open-settings', 'open-upgrade', 'open-admin'])
 defineProps({
   unreadCount: { type: Number, default: 0 },
 })
@@ -150,6 +160,8 @@ const chatStore = useChatStore()
 const authStore = useAuthStore()
 const userName = computed(() => authStore.currentUser?.display_name || authStore.currentUser?.username || '用户')
 const userInitial = computed(() => Array.from(userName.value)[0] || '用')
+// 仅 admin / super_admin 显示管理控制台入口按钮
+const isAdminRole = computed(() => ['admin', 'super_admin'].includes(authStore.currentUser?.role))
 
 const listRef = ref(null)
 // 距底部多少像素时触发加载下一页

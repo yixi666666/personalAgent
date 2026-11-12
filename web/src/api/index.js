@@ -273,3 +273,72 @@ export async function getUnreadAnnouncementCount() {
 export async function markAnnouncementRead(announcementId) {
   await api.post(`/announcements/${announcementId}/read`)
 }
+
+// ==== 管理端 ====
+
+export async function adminListConfigs() {
+  const { data } = await api.get('/admin/configs')
+  return data
+}
+
+export async function adminCreateConfig(payload) {
+  const { data } = await api.post('/admin/configs', payload)
+  return data
+}
+
+export async function adminUpdateConfig(id, payload) {
+  const { data } = await api.put(`/admin/configs/${id}`, payload)
+  return data
+}
+
+export async function adminDeleteConfig(id) {
+  await api.delete(`/admin/configs/${id}`)
+}
+
+export async function adminListModels() {
+  const { data } = await api.get('/admin/models')
+  return data
+}
+
+export async function adminCreateModel(payload) {
+  const { data } = await api.post('/admin/models', payload)
+  return data
+}
+
+export async function adminUpdateModel(id, payload) {
+  const { data } = await api.put(`/admin/models/${id}`, payload)
+  return data
+}
+
+export async function adminDeleteModel(id) {
+  await api.delete(`/admin/models/${id}`)
+}
+
+export async function adminListUsers() {
+  const { data } = await api.get('/admin/users')
+  return data
+}
+
+export async function adminUpdateUser(id, payload) {
+  const { data } = await api.patch(`/admin/users/${id}`, payload)
+  return data
+}
+
+export async function adminListAnnouncements() {
+  const { data } = await api.get('/admin/announcements')
+  return data
+}
+
+export async function adminCreateAnnouncement(payload) {
+  const { data } = await api.post('/admin/announcements', payload)
+  return data
+}
+
+export async function adminUpdateAnnouncement(id, payload) {
+  const { data } = await api.put(`/admin/announcements/${id}`, payload)
+  return data
+}
+
+export async function adminDeleteAnnouncement(id) {
+  await api.delete(`/admin/announcements/${id}`)
+}

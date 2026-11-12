@@ -6,7 +6,7 @@ import time
 import uuid
 from typing import Optional
 
-from fastapi import Cookie, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, status
 
 from agent.config import get_config
 from agent.database import get_db
@@ -75,6 +75,13 @@ def get_current_user(auth_session: Optional[str] = Cookie(default=None)) -> dict
     if not row:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录状态无效")
     return _user_dict(row)
+
+
+def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """管理员鉴权依赖：仅 admin / super_admin 可访问，其余返回 403"""
+    if current_user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
+    return current_user
 
 
 class AuthService:

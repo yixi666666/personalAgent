@@ -128,11 +128,8 @@ class WebSearchTool:
 
     @staticmethod
     def _post(url: str, payload: dict, api_key: str, timeout: float) -> httpx.Response:
-        """发送 POST 请求，支持通过 tool.tavily_proxy 配置代理"""
-        proxy = get_tool_config("tool.tavily_proxy")
+        """发送 POST 请求"""
         client_kwargs = {"timeout": timeout}
-        if proxy:
-            client_kwargs["proxy"] = proxy
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
