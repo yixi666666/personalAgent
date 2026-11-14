@@ -13,17 +13,17 @@ logger = logging.getLogger(__name__)
 
 _SELECT_SQL = (
     "SELECT id, code, name, aliases, official_website, category, competent_department, "
-    "province, city, edu_level, school_nature, raw_remark, created_time, updated_time "
+    "province, city, edu_level, school_nature, tags, raw_remark, created_time, updated_time "
     "FROM universities WHERE name = ?"
 )
 
 
-def _parse_aliases(raw: Optional[str]) -> list[str]:
-    """库中 aliases 为 JSON 数组字符串，解析失败时返回空列表"""
+def _parse_json_str_list(raw: Optional[str]) -> list[str]:
+    """库中 JSON 数组字符串字段（aliases / tags）解析失败时返回空列表"""
     try:
         parsed = json.loads(raw or "[]")
     except json.JSONDecodeError:
-        logger.warning("别名解析失败: %s", raw)
+        logger.warning("JSON 数组字段解析失败: %s", raw)
         return []
     if not isinstance(parsed, list):
         return []
@@ -37,5 +37,6 @@ def get_university_by_name(name: str) -> Optional[dict]:
     if not row:
         return None
     info = dict(row)
-    info["aliases"] = _parse_aliases(info.get("aliases"))
+    info["aliases"] = _parse_json_str_list(info.get("aliases"))
+    info["tags"] = _parse_json_str_list(info.get("tags"))
     return info

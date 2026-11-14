@@ -285,12 +285,33 @@ class SessionManager:
         ).fetchone()
         if not session_row:
             return None
+        return self._build_session_detail(db, session_row, feedback_user_id=user_id)
+
+    def get_session_admin(self, session_id: str) -> Optional[SessionDetailResponse]:
+        """管理员查看任意会话详情（不做归属校验，feedback 字段不回显）"""
+        db = get_db()
+        session_row = db.execute(
+            "SELECT * FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        if not session_row:
+            return None
+        return self._build_session_detail(db, session_row)
+
+    def _build_session_detail(
+        self, db, session_row, feedback_user_id: Optional[str] = None
+    ) -> SessionDetailResponse:
+        """会话详情构建（用户端与管理端共用）：contents 数组 + 可选反馈回显"""
+        session_id = session_row["id"]
         msg_rows = db.execute(
             "SELECT * FROM messages WHERE session_id = ? AND status = 'active' ORDER BY sequence",
             (session_id,),
         ).fetchall()
         # 批量查询当前用户对这些消息的 active 反馈（点赞/拉踩回显）
-        feedbacks = get_feedback_manager().get_active_feedbacks(user_id, [row["id"] for row in msg_rows])
+        feedbacks = (
+            get_feedback_manager().get_active_feedbacks(feedback_user_id, [row["id"] for row in msg_rows])
+            if feedback_user_id else {}
+        )
         messages = []
         for row in msg_rows:
             # 从 message_contents 表读取内容块
@@ -613,16 +634,26 @@ class SessionManager:
         except (json.JSONDecodeError, TypeError):
             return None
 
-    def get_tool_calls_by_message(self, message_id: str, user_id: str) -> list[ToolCallDetail]:
-        """获取当前用户指定消息下所有工具调用详情（懒加载接口使用）"""
+    def get_tool_calls_by_message(
+        self, message_id: str, user_id: Optional[str] = None
+    ) -> list[ToolCallDetail]:
+        """获取指定消息下所有工具调用详情（懒加载接口使用）
+
+        user_id 提供时校验会话归属（用户端）；为 None 时不校验（管理端共用）
+        """
         db = get_db()
-        rows = db.execute(
+        sql = (
             "SELECT tc.call_id, tc.message_id, tc.tool_name, tc.parameters, tc.status, tc.result "
             "FROM tool_calls tc JOIN messages m ON m.id = tc.message_id "
             "JOIN sessions s ON s.id = m.session_id "
-            "WHERE tc.message_id = ? AND s.user_id = ? ORDER BY tc.created_time",
-            (message_id, user_id),
-        ).fetchall()
+            "WHERE tc.message_id = ?"
+        )
+        params: list = [message_id]
+        if user_id is not None:
+            sql += " AND s.user_id = ?"
+            params.append(user_id)
+        sql += " ORDER BY tc.created_time"
+        rows = db.execute(sql, params).fetchall()
         return [
             ToolCallDetail(
                 call_id=row["call_id"],

@@ -31,6 +31,10 @@
           <el-icon><Bell /></el-icon>
           <span>公告管理</span>
         </el-menu-item>
+        <el-menu-item index="feedbacks">
+          <el-icon><Pointer /></el-icon>
+          <span>反馈管理</span>
+        </el-menu-item>
       </el-menu>
       <div class="admin-aside-footer">
         <el-button class="admin-footer-btn" type="danger" plain :loading="loggingOut" @click="handleLogout">退出登录</el-button>
@@ -124,16 +128,18 @@
 
       <!-- 用户管理 -->
       <template v-else-if="activeTab === 'users'">
-        <header class="content-header">
-          <div>
-            <h2>用户管理</h2>
-            <p class="content-desc">不能修改自己的角色/状态；禁用后该用户下次请求即失效</p>
-          </div>
-          <div class="content-actions">
-            <el-button @click="loadUsers">刷新</el-button>
-          </div>
-        </header>
-        <el-table v-loading="usersLoading" :data="pagedUsers" size="small" border class="content-table">
+        <div class="users-tab">
+          <header class="content-header">
+            <div>
+              <h2>用户管理</h2>
+              <p class="content-desc">不能修改自己的角色/状态；禁用后该用户下次请求即失效</p>
+            </div>
+            <div class="content-actions">
+              <el-button @click="loadUsers">刷新</el-button>
+            </div>
+          </header>
+          <div class="users-table-wrap">
+            <el-table v-loading="usersLoading" :data="pagedUsers" size="small" border height="100%" class="content-table users-table">
           <el-table-column prop="username" label="账号" min-width="140" show-overflow-tooltip />
           <el-table-column prop="display_name" label="显示名" min-width="120" show-overflow-tooltip />
           <el-table-column prop="email" label="邮箱" min-width="160" show-overflow-tooltip />
@@ -169,15 +175,17 @@
           <el-table-column label="注册时间" width="160">
             <template #default="{ row }">{{ formatTime(row.created_time) }}</template>
           </el-table-column>
-        </el-table>
-        <div class="table-pagination">
-          <el-pagination
-            v-model:current-page="userPage"
-            :total="users.length"
-            :page-size="USER_PAGE_SIZE"
-            layout="total, prev, pager, next"
-            background
-          />
+            </el-table>
+          </div>
+          <div class="table-pagination">
+            <el-pagination
+              v-model:current-page="userPage"
+              :total="users.length"
+              :page-size="USER_PAGE_SIZE"
+              layout="total, prev, pager, next"
+              background
+            />
+          </div>
         </div>
       </template>
 
@@ -220,6 +228,146 @@
           </el-table-column>
         </el-table>
       </template>
+
+      <!-- 反馈管理（点赞/拉踩） -->
+      <template v-else-if="activeTab === 'feedbacks'">
+        <header class="content-header">
+          <div>
+            <h2>反馈管理</h2>
+            <p class="content-desc">用户对助手回答的点赞/拉踩记录（只读）与原因字典；字典变更后立即对前端生效</p>
+          </div>
+          <div class="content-actions">
+            <el-button @click="loadFeedbackAll">刷新</el-button>
+          </div>
+        </header>
+
+        <div class="stat-cards">
+          <div class="stat-card">
+            <span class="stat-label">反馈总数</span>
+            <span class="stat-value">{{ feedbackStats.total_count }}</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">点赞</span>
+            <span class="stat-value stat-value-like">{{ feedbackStats.like_count }}</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">拉踩</span>
+            <span class="stat-value stat-value-dislike">{{ feedbackStats.dislike_count }}</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">参与用户</span>
+            <span class="stat-value">{{ feedbackStats.user_count }}</span>
+          </div>
+          <div class="stat-card stat-card-reasons">
+            <span class="stat-label">原因分布</span>
+            <div class="reason-dist">
+              <el-tag
+                v-for="rs in feedbackStats.reason_stats"
+                :key="rs.code"
+                size="small"
+                :type="rs.feedback_type === 'like' ? 'success' : 'danger'"
+                class="cap-tag"
+              >{{ rs.label }} × {{ rs.count }}</el-tag>
+              <span v-if="!feedbackStats.reason_stats.length" class="stat-empty">暂无原因数据</span>
+            </div>
+          </div>
+        </div>
+
+        <el-tabs v-model="feedbackSubTab">
+          <el-tab-pane label="反馈记录" name="records">
+            <div class="feedback-filters">
+              <el-select v-model="feedbackFilter.type" placeholder="全部类型" clearable style="width: 130px" @change="loadFeedbacks">
+                <el-option label="点赞" value="like" />
+                <el-option label="拉踩" value="dislike" />
+              </el-select>
+              <el-select v-model="feedbackFilter.reason" placeholder="全部原因" clearable filterable style="width: 180px" @change="loadFeedbacks">
+                <el-option v-for="r in filterReasonOptions" :key="r.code" :label="r.label" :value="r.code" />
+              </el-select>
+              <el-select v-model="feedbackFilter.status" style="width: 130px" @change="loadFeedbacks">
+                <el-option label="生效中" value="active" />
+                <el-option label="已撤销" value="revoked" />
+                <el-option label="全部状态" value="all" />
+              </el-select>
+            </div>
+            <el-table v-loading="feedbacksLoading" :data="pagedFeedbacks" size="small" border class="content-table">
+              <el-table-column label="用户" width="110" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.display_name || row.username || '-' }}</template>
+              </el-table-column>
+              <el-table-column prop="session_title" label="会话" min-width="130" show-overflow-tooltip />
+              <el-table-column label="类型" width="75" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="row.feedback_type === 'like' ? 'success' : 'danger'" size="small">{{ row.feedback_type === 'like' ? '点赞' : '拉踩' }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="原因" min-width="140">
+                <template #default="{ row }">
+                  <template v-if="row.reason_codes.length">
+                    <el-tag v-for="code in row.reason_codes" :key="code" size="small" class="cap-tag">{{ reasonLabel(code) }}</el-tag>
+                  </template>
+                  <span v-else>-</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="comment" label="补充说明" min-width="130" show-overflow-tooltip />
+              <el-table-column prop="message_preview" label="回答内容" min-width="220" class-name="preview-ellipsis" />
+              <el-table-column label="状态" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">{{ row.status === 'active' ? '生效中' : '已撤销' }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="提交时间" width="160">
+                <template #default="{ row }">{{ formatTime(row.created_time) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="110" fixed="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openFeedbackContext(row)">查看上下文</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="table-pagination">
+              <el-pagination
+                v-model:current-page="feedbackPage"
+                :total="feedbacks.length"
+                :page-size="FEEDBACK_PAGE_SIZE"
+                layout="total, prev, pager, next"
+                background
+              />
+            </div>
+          </el-tab-pane>
+
+          <el-tab-pane label="原因字典" name="reasons">
+            <div class="reason-pane-header">
+              <span class="content-desc">停用后的原因不再出现在用户反馈选择列表中；已被引用的原因不可删除，只能停用</span>
+              <el-button type="primary" size="small" @click="openReasonDialog()">新增原因</el-button>
+            </div>
+            <el-table v-loading="reasonsLoading" :data="feedbackReasons" size="small" border class="content-table">
+              <el-table-column prop="code" label="编码" min-width="150" show-overflow-tooltip />
+              <el-table-column label="适用" width="80" align="center">
+                <template #default="{ row }">{{ FEEDBACK_TYPE_LABELS[row.feedback_type] || row.feedback_type }}</template>
+              </el-table-column>
+              <el-table-column prop="label" label="名称" min-width="110" show-overflow-tooltip />
+              <el-table-column prop="description" label="说明" min-width="160" show-overflow-tooltip />
+              <el-table-column prop="sort_order" label="排序" width="70" align="center" />
+              <el-table-column label="引用数" width="80" align="center">
+                <template #default="{ row }">{{ row.used_count }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">{{ row.status === 'active' ? '启用' : '停用' }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="更新时间" width="160">
+                <template #default="{ row }">{{ formatTime(row.updated_time) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="130" fixed="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openReasonDialog(row)">编辑</el-button>
+                  <el-button link type="danger" :disabled="row.used_count > 0" @click="removeReason(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+        </el-tabs>
+      </template>
     </main>
 
     <!-- 系统配置编辑弹窗 -->
@@ -232,7 +380,24 @@
           <el-input v-model="configForm.label" placeholder="展示名称" />
         </el-form-item>
         <el-form-item label="值">
-          <el-input v-model="configForm.value" type="textarea" :rows="3" placeholder="统一存字符串" />
+          <el-radio-group v-if="configForm.value_type === 'boolean'" v-model="configForm.value">
+            <el-radio value="true">true</el-radio>
+            <el-radio value="false">false</el-radio>
+          </el-radio-group>
+          <el-select
+            v-else-if="isDefaultModelConfig"
+            v-model="configForm.value"
+            filterable
+            placeholder="从启用的对话模型中选择"
+          >
+            <el-option
+              v-for="m in chatModels"
+              :key="m.model_id"
+              :label="`${m.name} (${m.model_id})`"
+              :value="m.model_id"
+            />
+          </el-select>
+          <el-input v-else v-model="configForm.value" type="textarea" :rows="3" placeholder="统一存字符串" />
         </el-form-item>
         <el-form-item label="类型">
           <el-select v-model="configForm.value_type">
@@ -372,34 +537,106 @@
         <el-button type="primary" :loading="announcementSaving" @click="saveAnnouncement">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 反馈原因编辑弹窗 -->
+    <el-dialog v-model="reasonDialogVisible" :title="reasonForm.id ? '编辑原因' : '新增原因'" width="520px" align-center>
+      <el-form :model="reasonForm" label-width="90px">
+        <el-form-item label="编码" required>
+          <el-input v-model="reasonForm.code" :disabled="Boolean(reasonForm.id)" placeholder="稳定标识，如 insufficient_depth" />
+        </el-form-item>
+        <el-form-item label="适用类型" required>
+          <el-select v-model="reasonForm.feedback_type">
+            <el-option label="拉踩" value="dislike" />
+            <el-option label="点赞" value="like" />
+            <el-option label="通用" value="all" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="名称" required>
+          <el-input v-model="reasonForm.label" placeholder="前端展示名称" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="reasonForm.description" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="排序">
+          <el-input-number v-model="reasonForm.sort_order" :min="0" />
+          <span class="form-hint">数值越小越靠前</span>
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="reasonForm.status" active-value="active" inactive-value="disabled" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="reasonDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="reasonSaving" @click="saveReason">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 反馈上下文弹窗：复用聊天区消息渲染组件，与用户看到的完全一致 -->
+    <el-dialog v-model="contextDialogVisible" title="反馈上下文" width="860px" align-center top="4vh">
+      <div v-loading="contextLoading" class="context-wrap">
+        <template v-if="feedbackContextData">
+          <p class="context-session">会话：{{ feedbackContextData.session?.title || '-' }}</p>
+          <div class="context-body">
+            <div ref="contextScrollRef" class="context-messages">
+              <MessageList
+                :messages="contextMessages"
+                readonly
+                :highlight-id="feedbackContextData.feedback_message_id"
+                :tool-detail-loader="loadContextToolDetail"
+              />
+              <p v-if="!contextMessages.length" class="stat-empty">该会话暂无消息（可能已被删除）</p>
+            </div>
+            <MsgDotNav
+              variant="panel"
+              :messages="contextMessages"
+              :active-id="feedbackUserMessageId"
+              :scroll-el-fn="getContextScrollEl"
+              @jump="scrollContextToMessage"
+            />
+          </div>
+        </template>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Bell, ChatDotRound, Cpu, Setting, User } from '@element-plus/icons-vue'
+import { Bell, ChatDotRound, Cpu, Pointer, Setting, User } from '@element-plus/icons-vue'
+import MessageList from '../components/MessageList.vue'
+import MsgDotNav from '../components/MsgDotNav.vue'
+import { useAuthStore } from '../stores/auth'
+import { useChatStore } from '../stores/chat'
 import {
   adminCreateAnnouncement,
   adminCreateConfig,
+  adminCreateFeedbackReason,
   adminCreateModel,
   adminDeleteAnnouncement,
   adminDeleteConfig,
+  adminDeleteFeedbackReason,
   adminDeleteModel,
+  adminFeedbackContext,
+  adminFeedbackStats,
   adminListAnnouncements,
   adminListConfigs,
+  adminListFeedbackReasons,
+  adminListFeedbacks,
   adminListModels,
   adminListUsers,
   adminUpdateAnnouncement,
   adminUpdateConfig,
+  adminUpdateFeedbackReason,
   adminUpdateModel,
   adminUpdateUser,
+  adminToolCalls,
 } from '../api'
-import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const chatStore = useChatStore()
 
 const activeTab = ref('configs')
 const loggingOut = ref(false)
@@ -452,8 +689,14 @@ function openConfigDialog(row = null) {
     description: row?.description || '',
     is_public: row?.is_public || false,
   })
+  // 默认对话模型下拉需要模型列表，未加载时拉一次
+  if (!models.value.length) loadModels()
   configDialogVisible.value = true
 }
+
+/** 编辑 llm.default_model 时，值改为从启用的对话模型中选择 */
+const isDefaultModelConfig = computed(() => configForm.key.trim() === 'llm.default_model')
+const chatModels = computed(() => models.value.filter(m => m.model_type === 'chat' && m.is_enabled))
 
 async function saveConfig() {
   if (!configForm.key.trim()) {
@@ -768,6 +1011,203 @@ async function removeAnnouncement(row) {
   }
 }
 
+// ==== 反馈管理（点赞/拉踩） ====
+
+const FEEDBACK_TYPE_LABELS = { like: '点赞', dislike: '拉踩', all: '通用' }
+const FEEDBACK_PAGE_SIZE = 10
+
+const feedbackStats = ref({ total_count: 0, like_count: 0, dislike_count: 0, user_count: 0, reason_stats: [] })
+const feedbackSubTab = ref('records')
+const feedbacks = ref([])
+const feedbacksLoading = ref(false)
+const feedbackPage = ref(1)
+const feedbackFilter = reactive({ type: '', reason: '', status: 'active' })
+
+const feedbackReasons = ref([])
+const reasonsLoading = ref(false)
+const reasonDialogVisible = ref(false)
+const reasonSaving = ref(false)
+const reasonForm = reactive({
+  id: null, code: '', feedback_type: 'dislike', label: '', description: '', status: 'active', sort_order: 0,
+})
+
+const contextDialogVisible = ref(false)
+const contextLoading = ref(false)
+const feedbackContextData = ref(null)
+const contextMessages = ref([])
+const contextScrollRef = ref(null)
+
+/** 被评价回复对应的用户提问：在上下文中向前找最近的一条 user 消息 */
+const feedbackUserMessageId = computed(() => {
+  const targetId = feedbackContextData.value?.feedback_message_id
+  if (!targetId) return null
+  const idx = contextMessages.value.findIndex(m => m.id === targetId)
+  for (let i = idx < 0 ? contextMessages.value.length : idx; i >= 0; i--) {
+    if (contextMessages.value[i].role === 'user') return contextMessages.value[i].id
+  }
+  return null
+})
+
+const pagedFeedbacks = computed(() => {
+  const start = (feedbackPage.value - 1) * FEEDBACK_PAGE_SIZE
+  return feedbacks.value.slice(start, start + FEEDBACK_PAGE_SIZE)
+})
+
+// 记录筛选联动：选了类型后原因下拉只显示适用该类型的原因
+const filterReasonOptions = computed(() => {
+  if (!feedbackFilter.type) return feedbackReasons.value
+  return feedbackReasons.value.filter(r => r.feedback_type === feedbackFilter.type || r.feedback_type === 'all')
+})
+
+function reasonLabel(code) {
+  const reason = feedbackReasons.value.find(r => r.code === code)
+  return reason?.label || code
+}
+
+async function loadFeedbackStats() {
+  try {
+    feedbackStats.value = await adminFeedbackStats()
+  } catch (error) {
+    handleApiError(error, '加载反馈统计失败')
+  }
+}
+
+async function loadFeedbacks() {
+  feedbacksLoading.value = true
+  try {
+    const params = { status: feedbackFilter.status }
+    if (feedbackFilter.type) params.feedback_type = feedbackFilter.type
+    if (feedbackFilter.reason) params.reason_code = feedbackFilter.reason
+    feedbacks.value = await adminListFeedbacks(params)
+    const maxPage = Math.max(1, Math.ceil(feedbacks.value.length / FEEDBACK_PAGE_SIZE))
+    if (feedbackPage.value > maxPage) feedbackPage.value = maxPage
+  } catch (error) {
+    handleApiError(error, '加载反馈记录失败')
+  } finally {
+    feedbacksLoading.value = false
+  }
+}
+
+async function loadFeedbackReasons() {
+  reasonsLoading.value = true
+  try {
+    feedbackReasons.value = await adminListFeedbackReasons()
+  } catch (error) {
+    handleApiError(error, '加载原因字典失败')
+  } finally {
+    reasonsLoading.value = false
+  }
+}
+
+function loadFeedbackAll() {
+  loadFeedbackStats()
+  loadFeedbacks()
+  loadFeedbackReasons()
+}
+
+async function openFeedbackContext(row) {
+  contextDialogVisible.value = true
+  contextLoading.value = true
+  feedbackContextData.value = null
+  contextMessages.value = []
+  try {
+    const data = await adminFeedbackContext(row.id)
+    feedbackContextData.value = data
+    // 复用聊天页同款转换逻辑，渲染效果与用户看到的完全一致
+    contextMessages.value = chatStore.buildMessagesFromDetail(data.session)
+    // 渲染完成后定位到该回复对应的用户提问（回复本身保持橙框高亮）
+    await nextTick()
+    scrollContextToMessage(feedbackUserMessageId.value || data.feedback_message_id)
+  } catch (error) {
+    handleApiError(error, '加载反馈上下文失败')
+    contextDialogVisible.value = false
+  } finally {
+    contextLoading.value = false
+  }
+}
+
+/** 在上下文弹窗内滚动到指定消息（圆点导航与自动定位共用） */
+function scrollContextToMessage(msgId) {
+  const message = contextScrollRef.value?.querySelector(`.message-item[data-key="${msgId}"]`)
+  message?.scrollIntoView({ behavior: 'instant', block: 'center' })
+}
+
+/** 圆点导航滚动联动：返回上下文弹窗滚动容器（模板 ref） */
+function getContextScrollEl() {
+  return contextScrollRef.value
+}
+
+/** 只读模式的工具详情懒加载：走管理端接口（不做会话归属校验） */
+async function loadContextToolDetail(messageId) {
+  try {
+    return await adminToolCalls(messageId)
+  } catch (error) {
+    console.error('懒加载工具详情失败:', error)
+    return null
+  }
+}
+
+function openReasonDialog(row = null) {
+  Object.assign(reasonForm, {
+    id: row?.id || null,
+    code: row?.code || '',
+    feedback_type: row?.feedback_type || 'dislike',
+    label: row?.label || '',
+    description: row?.description || '',
+    status: row?.status || 'active',
+    sort_order: row?.sort_order ?? 0,
+  })
+  reasonDialogVisible.value = true
+}
+
+async function saveReason() {
+  if (!reasonForm.code.trim()) {
+    ElMessage.warning('请填写原因编码')
+    return
+  }
+  if (!reasonForm.label.trim()) {
+    ElMessage.warning('请填写原因名称')
+    return
+  }
+  reasonSaving.value = true
+  try {
+    const payload = {
+      feedback_type: reasonForm.feedback_type,
+      label: reasonForm.label.trim(),
+      description: reasonForm.description || null,
+      status: reasonForm.status,
+      sort_order: reasonForm.sort_order,
+    }
+    if (reasonForm.id) {
+      await adminUpdateFeedbackReason(reasonForm.id, payload)
+    } else {
+      await adminCreateFeedbackReason({ ...payload, code: reasonForm.code.trim() })
+    }
+    ElMessage.success('原因已保存')
+    reasonDialogVisible.value = false
+    await loadFeedbackReasons()
+  } catch (error) {
+    handleApiError(error, '保存原因失败')
+  } finally {
+    reasonSaving.value = false
+  }
+}
+
+async function removeReason(row) {
+  try {
+    await ElMessageBox.confirm(`确定删除原因「${row.label || row.code}」？`, '删除确认', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await adminDeleteFeedbackReason(row.id)
+    ElMessage.success('原因已删除')
+    await loadFeedbackReasons()
+  } catch (error) {
+    handleApiError(error, '删除原因失败')
+  }
+}
+
 // ==== 退出 ====
 
 async function handleLogout() {
@@ -785,6 +1225,7 @@ onMounted(() => {
   loadModels()
   loadUsers()
   loadAnnouncements()
+  loadFeedbackAll()
 })
 </script>
 
@@ -929,6 +1370,38 @@ onMounted(() => {
   padding: 14px 0;
 }
 
+/* 用户管理：表格区域预分配固定空间（占满内容区剩余高度），
+   数据多时表体内部滚动、分页固定底部，不随内容撑开整页 */
+.users-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.users-tab .content-header {
+  flex-shrink: 0;
+}
+
+.users-table-wrap {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 用户管理：压缩内嵌控件与行距。
+   el-switch 容器固定 32px（核心只有 20px）、el-select small 为 24px，
+   都会把行高撑到 14×2+32=60px；压回 20px 并减小 cell 间距后约 40px */
+.users-table :deep(.el-table__cell) {
+  padding: 10px 0;
+}
+
+.users-table :deep(.el-switch) {
+  height: 20px;
+}
+
+.users-table :deep(.el-select__wrapper) {
+  min-height: 20px;
+}
+
 .cap-tag {
   margin-right: 4px;
   margin-bottom: 2px;
@@ -958,5 +1431,104 @@ onMounted(() => {
 .form-sep {
   margin: 0 6px;
   color: #909399;
+}
+
+/* ===== 反馈管理 ===== */
+
+.stat-cards {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 18px;
+  min-width: 110px;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #e4e7ed;
+}
+
+.stat-card-reasons {
+  flex: 1;
+  min-width: 240px;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.stat-value-like {
+  color: #67c23a;
+}
+
+.stat-value-dislike {
+  color: #f56c6c;
+}
+
+.reason-dist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 24px;
+  align-items: center;
+}
+
+.stat-empty {
+  font-size: 12px;
+  color: #909399;
+}
+
+.feedback-filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.reason-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+/* 反馈记录「回答内容」：单行截断，不弹悬浮完整内容，保证行高与文本行一致 */
+.content-table :deep(td.preview-ellipsis .cell) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 上下文弹窗 */
+.context-wrap {
+  min-height: 120px;
+}
+
+.context-session {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #606266;
+}
+
+.context-body {
+  position: relative;
+}
+
+.context-messages {
+  max-height: 62vh;
+  overflow-y: auto;
+  padding: 4px 8px;
 }
 </style>

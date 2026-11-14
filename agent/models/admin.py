@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field
 from typing import Optional
 
+from agent.models.session import SessionDetailResponse
+
 
 # ========== 系统配置 (system_configs) ==========
 
@@ -141,3 +143,73 @@ class AdminAnnouncementUpdate(BaseModel):
     is_pinned: Optional[bool] = None
     popup_start_time: Optional[int] = None
     popup_end_time: Optional[int] = None
+
+
+# ========== 反馈管理 (message_feedbacks / feedback_reasons) ==========
+
+class AdminFeedbackItem(BaseModel):
+    id: str
+    message_id: str
+    session_id: Optional[str] = None
+    session_title: Optional[str] = None
+    user_id: Optional[str] = None
+    username: Optional[str] = None
+    display_name: Optional[str] = None
+    feedback_type: Optional[str] = None
+    reason_codes: list[str] = []
+    comment: Optional[str] = None
+    message_preview: Optional[str] = None
+    status: Optional[str] = None
+    created_time: Optional[int] = None
+    updated_time: Optional[int] = None
+
+
+class AdminFeedbackReasonStat(BaseModel):
+    code: str
+    label: Optional[str] = None
+    feedback_type: Optional[str] = None
+    count: int
+
+
+class AdminFeedbackStats(BaseModel):
+    total_count: int = 0
+    like_count: int = 0
+    dislike_count: int = 0
+    user_count: int = 0
+    reason_stats: list[AdminFeedbackReasonStat] = []
+
+
+class AdminFeedbackReasonItem(BaseModel):
+    id: str
+    code: str
+    feedback_type: Optional[str] = None
+    label: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    sort_order: Optional[int] = None
+    used_count: int = 0
+    created_time: Optional[int] = None
+    updated_time: Optional[int] = None
+
+
+class AdminFeedbackReasonCreate(BaseModel):
+    code: str = Field(min_length=1, description="稳定标识，全局唯一")
+    feedback_type: str = Field(description="like | dislike | all")
+    label: str = Field(min_length=1)
+    description: Optional[str] = None
+    status: str = Field(default="active", description="active | disabled")
+    sort_order: int = Field(default=0)
+
+
+class AdminFeedbackReasonUpdate(BaseModel):
+    feedback_type: Optional[str] = None
+    label: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class AdminFeedbackContext(BaseModel):
+    """反馈上下文：与用户侧会话详情接口完全一致的数据 + 被评价消息定位"""
+    feedback_message_id: str
+    session: SessionDetailResponse

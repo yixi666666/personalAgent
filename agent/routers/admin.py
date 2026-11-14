@@ -1,4 +1,4 @@
-"""管理端路由：系统配置 / 模型配置 / 用户管理 / 公告管理。
+"""管理端路由：系统配置 / 模型配置 / 用户管理 / 公告管理 / 反馈管理。
 
 - 全部接口要求 admin / super_admin 角色（router 级 require_admin 依赖）
 - 时间字段：UTC 秒，应用层填充
@@ -10,14 +10,22 @@ import logging
 import sqlite3
 import time
 import uuid
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agent.database import get_db
 from agent.models.admin import (
     AdminAnnouncementCreate,
     AdminAnnouncementItem,
     AdminAnnouncementUpdate,
+    AdminFeedbackContext,
+    AdminFeedbackItem,
+    AdminFeedbackReasonCreate,
+    AdminFeedbackReasonItem,
+    AdminFeedbackReasonStat,
+    AdminFeedbackReasonUpdate,
+    AdminFeedbackStats,
     AdminUserItem,
     AdminUserUpdate,
     ModelConfigCreate,
@@ -29,6 +37,8 @@ from agent.models.admin import (
 )
 from agent.services.auth import require_admin
 from agent.services.model_service import encrypt_api_key
+from agent.services.session import get_session_manager
+from agent.models.session import ToolCallDetail
 
 logger = logging.getLogger(__name__)
 
@@ -443,3 +453,274 @@ def delete_announcement(announcement_id: str):
     db.execute("DELETE FROM announcements WHERE id = ?", (announcement_id,))
     db.execute("DELETE FROM announcement_reads WHERE announcement_id = ?", (announcement_id,))
     db.commit()
+
+
+# ========== 反馈管理 (message_feedbacks / feedback_reasons) ==========
+
+FEEDBACK_TYPES = {"like", "dislike"}
+REASON_FEEDBACK_TYPES = {"like", "dislike", "all"}
+REASON_STATUSES = {"active", "disabled"}
+
+
+def _parse_reason_codes(raw) -> list[str]:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def _message_text_preview(db, message_id: str, max_len: int = 200) -> Optional[str]:
+    """提取消息的文本内容（type='text' 的内容块按序拼接），超长截断"""
+    rows = db.execute(
+        "SELECT content FROM message_contents WHERE message_id = ? AND type = 'text' "
+        "ORDER BY sort_order",
+        (message_id,),
+    ).fetchall()
+    text = "\n".join(row["content"] or "" for row in rows).strip()
+    if not text:
+        return None
+    return text[:max_len] + ("…" if len(text) > max_len else "")
+
+
+def _feedback_like_clause(reason_code: str) -> tuple[str, list]:
+    """reason_codes 为 JSON 数组文本，用 json_each 精确匹配 code"""
+    return "EXISTS (SELECT 1 FROM json_each(f.reason_codes) je WHERE je.value = ?)", [reason_code]
+
+
+@router.get("/feedbacks/stats", response_model=AdminFeedbackStats)
+def feedback_stats():
+    """反馈统计：总数 / 点赞数 / 拉踩数 / 参与用户数 / 原因分布"""
+    db = get_db()
+    rows = db.execute(
+        "SELECT feedback_type, reason_codes, user_id FROM message_feedbacks WHERE status = 'active'"
+    ).fetchall()
+    like_count = 0
+    dislike_count = 0
+    user_ids = set()
+    reason_counter: dict[str, int] = {}
+    for row in rows:
+        if row["feedback_type"] == "like":
+            like_count += 1
+        elif row["feedback_type"] == "dislike":
+            dislike_count += 1
+        if row["user_id"]:
+            user_ids.add(row["user_id"])
+        for code in _parse_reason_codes(row["reason_codes"]):
+            reason_counter[code] = reason_counter.get(code, 0) + 1
+    # 原因 label 从字典取，字典中已不存在的原因保留 code 原样展示
+    reason_rows = db.execute("SELECT code, label, feedback_type FROM feedback_reasons").fetchall()
+    reason_labels = {row["code"]: (row["label"], row["feedback_type"]) for row in reason_rows}
+    reason_stats = [
+        AdminFeedbackReasonStat(
+            code=code,
+            label=reason_labels.get(code, (None, None))[0] or code,
+            feedback_type=reason_labels.get(code, (None, None))[1],
+            count=count,
+        )
+        for code, count in sorted(reason_counter.items(), key=lambda item: -item[1])
+    ]
+    return AdminFeedbackStats(
+        total_count=len(rows),
+        like_count=like_count,
+        dislike_count=dislike_count,
+        user_count=len(user_ids),
+        reason_stats=reason_stats,
+    )
+
+
+@router.get("/feedbacks", response_model=list[AdminFeedbackItem])
+def list_feedbacks(
+    feedback_type: str = Query(default=None, description="按类型过滤：like | dislike"),
+    reason_code: str = Query(default=None, description="按原因编码过滤（含该原因的记录）"),
+    status: str = Query(default="active", description="记录状态：active | revoked | all"),
+):
+    """反馈记录列表：联表返回用户名 / 会话标题 / 被评价消息文本预览，按提交时间倒序"""
+    if feedback_type is not None and feedback_type not in FEEDBACK_TYPES:
+        raise _bad_request(ValueError(f"不支持的反馈类型: {feedback_type}"))
+    if status not in ("active", "revoked", "all"):
+        raise _bad_request(ValueError(f"不支持的记录状态: {status}"))
+    db = get_db()
+    where = ["1 = 1"]
+    params: list = []
+    if status != "all":
+        where.append("f.status = ?")
+        params.append(status)
+    if feedback_type:
+        where.append("f.feedback_type = ?")
+        params.append(feedback_type)
+    if reason_code:
+        clause, clause_params = _feedback_like_clause(reason_code)
+        where.append(clause)
+        params.extend(clause_params)
+    rows = db.execute(
+        "SELECT f.*, m.session_id AS session_id, s.title AS session_title, u.username, u.display_name "
+        "FROM message_feedbacks f "
+        "LEFT JOIN messages m ON m.id = f.message_id "
+        "LEFT JOIN sessions s ON s.id = m.session_id "
+        "LEFT JOIN users u ON u.id = f.user_id "
+        f"WHERE {' AND '.join(where)} ORDER BY f.created_time DESC",
+        params,
+    ).fetchall()
+    items = []
+    for row in rows:
+        items.append(AdminFeedbackItem(
+            id=row["id"],
+            message_id=row["message_id"],
+            session_id=row["session_id"],
+            session_title=row["session_title"],
+            user_id=row["user_id"],
+            username=row["username"],
+            display_name=row["display_name"],
+            feedback_type=row["feedback_type"],
+            reason_codes=_parse_reason_codes(row["reason_codes"]),
+            comment=row["comment"],
+            message_preview=_message_text_preview(db, row["message_id"]),
+            status=row["status"],
+            created_time=row["created_time"],
+            updated_time=row["updated_time"],
+        ))
+    return items
+
+
+@router.get("/feedbacks/reasons", response_model=list[AdminFeedbackReasonItem])
+def list_feedback_reasons_admin():
+    """原因字典全量列表（含停用项），used_count 为被 active 反馈引用的次数"""
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM feedback_reasons ORDER BY feedback_type, sort_order, code"
+    ).fetchall()
+    usage_rows = db.execute(
+        "SELECT je.value AS code, COUNT(*) AS cnt FROM message_feedbacks f, json_each(f.reason_codes) je "
+        "WHERE f.status = 'active' GROUP BY je.value"
+    ).fetchall()
+    usage = {row["code"]: row["cnt"] for row in usage_rows}
+    return [
+        AdminFeedbackReasonItem(
+            id=row["id"],
+            code=row["code"],
+            feedback_type=row["feedback_type"],
+            label=row["label"],
+            description=row["description"],
+            status=row["status"],
+            sort_order=row["sort_order"],
+            used_count=usage.get(row["code"], 0),
+            created_time=row["created_time"],
+            updated_time=row["updated_time"],
+        )
+        for row in rows
+    ]
+
+
+@router.post("/feedbacks/reasons", response_model=AdminFeedbackReasonItem, status_code=201)
+def create_feedback_reason(payload: AdminFeedbackReasonCreate):
+    if payload.feedback_type not in REASON_FEEDBACK_TYPES:
+        raise _bad_request(ValueError(f"不支持的适用类型: {payload.feedback_type}"))
+    if payload.status not in REASON_STATUSES:
+        raise _bad_request(ValueError(f"不支持的状态: {payload.status}"))
+    db = get_db()
+    if db.execute("SELECT 1 FROM feedback_reasons WHERE code = ?", (payload.code,)).fetchone():
+        raise _bad_request(ValueError(f"原因编码已存在: {payload.code}"))
+    reason_id = str(uuid.uuid4())
+    now = _utc_now()
+    db.execute(
+        "INSERT INTO feedback_reasons (id, code, feedback_type, label, description, status, sort_order, created_time, updated_time) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            reason_id, payload.code, payload.feedback_type, payload.label,
+            payload.description, payload.status, payload.sort_order, now, now,
+        ),
+    )
+    db.commit()
+    row = db.execute("SELECT * FROM feedback_reasons WHERE id = ?", (reason_id,)).fetchone()
+    return AdminFeedbackReasonItem(
+        id=row["id"], code=row["code"], feedback_type=row["feedback_type"], label=row["label"],
+        description=row["description"], status=row["status"], sort_order=row["sort_order"],
+        used_count=0, created_time=row["created_time"], updated_time=row["updated_time"],
+    )
+
+
+@router.put("/feedbacks/reasons/{reason_id}", response_model=AdminFeedbackReasonItem)
+def update_feedback_reason(reason_id: str, payload: AdminFeedbackReasonUpdate):
+    if payload.feedback_type is not None and payload.feedback_type not in REASON_FEEDBACK_TYPES:
+        raise _bad_request(ValueError(f"不支持的适用类型: {payload.feedback_type}"))
+    if payload.status is not None and payload.status not in REASON_STATUSES:
+        raise _bad_request(ValueError(f"不支持的状态: {payload.status}"))
+    db = get_db()
+    row = db.execute("SELECT * FROM feedback_reasons WHERE id = ?", (reason_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="反馈原因不存在")
+    db.execute(
+        "UPDATE feedback_reasons SET feedback_type = ?, label = ?, description = ?, status = ?, "
+        "sort_order = ?, updated_time = ? WHERE id = ?",
+        (
+            payload.feedback_type if payload.feedback_type is not None else row["feedback_type"],
+            payload.label if payload.label is not None else row["label"],
+            payload.description if payload.description is not None else row["description"],
+            payload.status if payload.status is not None else row["status"],
+            payload.sort_order if payload.sort_order is not None else row["sort_order"],
+            _utc_now(),
+            reason_id,
+        ),
+    )
+    db.commit()
+    updated = db.execute("SELECT * FROM feedback_reasons WHERE id = ?", (reason_id,)).fetchone()
+    usage = db.execute(
+        "SELECT COUNT(*) AS cnt FROM message_feedbacks f, json_each(f.reason_codes) je "
+        "WHERE f.status = 'active' AND je.value = ?",
+        (updated["code"],),
+    ).fetchone()
+    return AdminFeedbackReasonItem(
+        id=updated["id"], code=updated["code"], feedback_type=updated["feedback_type"],
+        label=updated["label"], description=updated["description"], status=updated["status"],
+        sort_order=updated["sort_order"], used_count=usage["cnt"],
+        created_time=updated["created_time"], updated_time=updated["updated_time"],
+    )
+
+
+@router.delete("/feedbacks/reasons/{reason_id}", status_code=204)
+def delete_feedback_reason(reason_id: str):
+    db = get_db()
+    row = db.execute("SELECT * FROM feedback_reasons WHERE id = ?", (reason_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="反馈原因不存在")
+    used = db.execute(
+        "SELECT COUNT(*) AS cnt FROM message_feedbacks f, json_each(f.reason_codes) je "
+        "WHERE f.status = 'active' AND je.value = ?",
+        (row["code"],),
+    ).fetchone()
+    if used["cnt"] > 0:
+        raise _bad_request(ValueError(f"原因「{row['label'] or row['code']}」已被 {used['cnt']} 条反馈引用，请改为停用"))
+    db.execute("DELETE FROM feedback_reasons WHERE id = ?", (reason_id,))
+    db.commit()
+
+
+@router.get("/feedbacks/{feedback_id}/context", response_model=AdminFeedbackContext)
+def feedback_context(feedback_id: str):
+    """查看反馈上下文：复用用户侧会话详情构建逻辑，返回与用户看到的一模一样的数据"""
+    db = get_db()
+    fb = db.execute(
+        "SELECT f.message_id, m.session_id FROM message_feedbacks f "
+        "LEFT JOIN messages m ON m.id = f.message_id "
+        "WHERE f.id = ?",
+        (feedback_id,),
+    ).fetchone()
+    if not fb:
+        raise HTTPException(status_code=404, detail="反馈记录不存在")
+    if not fb["session_id"]:
+        raise HTTPException(status_code=404, detail="被评价消息不存在或所属会话已删除")
+    detail = get_session_manager().get_session_admin(fb["session_id"])
+    if not detail:
+        raise HTTPException(status_code=404, detail=f"会话不存在: {fb['session_id']}")
+    return AdminFeedbackContext(
+        feedback_message_id=fb["message_id"],
+        session=detail,
+    )
+
+
+@router.get("/tool-calls", response_model=list[ToolCallDetail])
+def admin_tool_calls(message_id: str = Query(..., description="消息ID")):
+    """工具详情懒加载（管理端共用用户侧逻辑，不做会话归属校验）"""
+    return get_session_manager().get_tool_calls_by_message(message_id)

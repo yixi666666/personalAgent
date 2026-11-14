@@ -806,12 +806,33 @@ const universityDetailInflight = new Map()
 
 const CATEGORY_TEXT = { ordinary: '普通高校', adult: '成人高校' }
 
+// tags 字段代码 → 展示名称，顺序即展示顺序
+const TAG_TEXT_ORDER = ['985', '211', 'c9', 'double_first', 'mep', 'miit', 'mps', 'nhc']
+const TAG_TEXT = {
+  985: '985',
+  211: '211',
+  c9: 'C9联盟',
+  double_first: '双一流',
+  mep: '电力部直属',
+  miit: '工信部直属',
+  mps: '公安部直属',
+  nhc: '卫健委直属',
+}
+
 const universityInfoRows = computed(() => {
   const info = universityDetail.value
   if (!info) return []
+  const tags = (info.tags || [])
+    .map(code => TAG_TEXT[code] || code)
+    .sort((a, b) => {
+      const ia = TAG_TEXT_ORDER.indexOf(a)
+      const ib = TAG_TEXT_ORDER.indexOf(b)
+      return (ia === -1 ? TAG_TEXT_ORDER.length : ia) - (ib === -1 ? TAG_TEXT_ORDER.length : ib)
+    })
   return [
     { label: '学校标识码', value: info.code },
     { label: '别名', value: (info.aliases || []).join('、') },
+    { label: '标签', value: tags.join('、') },
     { label: '学校类型', value: CATEGORY_TEXT[info.category] || info.category },
     { label: '主管部门', value: info.competent_department },
     { label: '所在地', value: [info.province, info.city].filter(Boolean).join(' ') },

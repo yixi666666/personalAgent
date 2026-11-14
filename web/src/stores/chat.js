@@ -255,6 +255,54 @@ export const useChatStore = defineStore('chat', () => {
     return blocks
   }
 
+  /**
+   * 从会话详情数据（/v1/sessions/{id} 与管理端反馈上下文共用）构建渲染用消息数组。
+   * assistant 的 tool_call 块暂存，与下一条 assistant 消息合并到同一气泡。
+   */
+  function buildMessagesFromDetail(detail) {
+    const rawMessages = detail?.messages || []
+    const processed = []
+    let pendingBlocks = []
+
+    for (const m of rawMessages) {
+      const contents = m.contents || []
+      const hasToolCall = contents.some(c => c.type === 'tool_call')
+
+      // 不在这里请求工具详情，tool_call 块只存 call_id
+      // 用户点击工具符号时再懒加载
+      const currentBlocks = buildBlocksFromContents(contents, {}, m.id)
+
+      // 有 tool_call 的 assistant 消息暂存，等下一条 assistant 消息合并
+      // 这样工具调用和后续回复在同一个消息气泡中显示
+      if (m.role === 'assistant' && hasToolCall) {
+        pendingBlocks = pendingBlocks.concat(currentBlocks)
+        continue
+      }
+
+      // 合并暂存的 blocks + 当前 blocks
+      const allBlocks = pendingBlocks.length > 0
+        ? pendingBlocks.concat(currentBlocks)
+        : currentBlocks
+      pendingBlocks = []
+
+      processed.push({
+        id: m.id,
+        role: m.role,
+        blocks: allBlocks,
+      })
+    }
+
+    // 如果最后还有未合并的工具调用
+    if (pendingBlocks.length > 0) {
+      processed.push({
+        id: `pending_tc_${Date.now()}`,
+        role: 'assistant',
+        blocks: pendingBlocks,
+      })
+    }
+    return processed
+  }
+
   async function loadSessionData(sessionId) {
     const generation = userDataGeneration
     try {
@@ -262,52 +310,9 @@ export const useChatStore = defineStore('chat', () => {
       if (generation !== userDataGeneration) return
       currentSessionId.value = sessionId
       syncSessionFromDetail(data)
-      const rawMessages = data.messages || []
-      const processed = []
-      let pendingBlocks = []
-
-      for (const m of rawMessages) {
-        const contents = m.contents || []
-        const hasToolCall = contents.some(c => c.type === 'tool_call')
-        const hasText = contents.some(c => c.type === 'text')
-
-        // 不在这里请求工具详情，tool_call 块只存 call_id
-        // 用户点击工具符号时再懒加载
-        const currentBlocks = buildBlocksFromContents(contents, {}, m.id)
-
-        // 有 tool_call 的 assistant 消息暂存，等下一条 assistant 消息合并
-        // 这样工具调用和后续回复在同一个消息气泡中显示
-        if (m.role === 'assistant' && hasToolCall) {
-          pendingBlocks = pendingBlocks.concat(currentBlocks)
-          continue
-        }
-
-        // 合并暂存的 blocks + 当前 blocks
-        const allBlocks = pendingBlocks.length > 0
-          ? pendingBlocks.concat(currentBlocks)
-          : currentBlocks
-        pendingBlocks = []
-
-        const msg = {
-          id: m.id,
-          role: m.role,
-          blocks: allBlocks,
-        }
-
-        processed.push(msg)
-      }
-
-      // 如果最后还有未合并的工具调用
-      if (pendingBlocks.length > 0) {
-        processed.push({
-          id: `pending_tc_${Date.now()}`,
-          role: 'assistant',
-          blocks: pendingBlocks,
-        })
-      }
-
-      messages.value = processed
+      messages.value = buildMessagesFromDetail(data)
       // 回显当前用户对助手消息的反馈（点赞/拉踩）
+      const rawMessages = data.messages || []
       const feedbackMap = {}
       for (const m of rawMessages) {
         if (m.feedback && m.feedback.feedback_type) {
@@ -825,6 +830,17 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * 提取消息的纯文本内容（text 块拼接），供复制、回退、消息圆点导航等共用
+   */
+  function messageText(msg) {
+    return (msg?.blocks || [])
+      .filter(block => block.type === 'text' && block.content)
+      .map(block => block.content)
+      .join('\n')
+      .trim()
+  }
+
+  /**
    * 懒加载：用户点击工具符号时，按 message_id 请求工具详情并更新对应 block
    * messageId 是 tool_call 所属的原始消息ID（通过 block._messageId 传递）
    */
@@ -898,6 +914,8 @@ export const useChatStore = defineStore('chat', () => {
     retryLastAnswer,
     rollbackToMessage,
     loadToolCallDetail,
+    buildMessagesFromDetail,
+    messageText,
     loadDislikeReasons,
     submitFeedback: submitFeedbackAction,
     revokeFeedback: revokeFeedbackAction,

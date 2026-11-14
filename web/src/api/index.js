@@ -342,3 +342,45 @@ export async function adminUpdateAnnouncement(id, payload) {
 export async function adminDeleteAnnouncement(id) {
   await api.delete(`/admin/announcements/${id}`)
 }
+
+// ==== 反馈管理（点赞/拉踩）====
+
+export async function adminFeedbackStats() {
+  const { data } = await api.get('/admin/feedbacks/stats')
+  return data
+}
+
+export async function adminListFeedbacks(params = {}) {
+  const { data } = await api.get('/admin/feedbacks', { params })
+  return data
+}
+
+export async function adminFeedbackContext(feedbackId) {
+  const { data } = await api.get(`/admin/feedbacks/${feedbackId}/context`)
+  return data
+}
+
+// 管理端工具详情懒加载（与用户侧 /tool-calls 同构，不做会话归属校验）
+export async function adminToolCalls(messageId) {
+  const { data } = await api.get('/admin/tool-calls', { params: { message_id: messageId } })
+  return data
+}
+
+export async function adminListFeedbackReasons() {
+  const { data } = await api.get('/admin/feedbacks/reasons')
+  return data
+}
+
+export async function adminCreateFeedbackReason(payload) {
+  const { data } = await api.post('/admin/feedbacks/reasons', payload)
+  return data
+}
+
+export async function adminUpdateFeedbackReason(id, payload) {
+  const { data } = await api.put(`/admin/feedbacks/reasons/${id}`, payload)
+  return data
+}
+
+export async function adminDeleteFeedbackReason(id) {
+  await api.delete(`/admin/feedbacks/reasons/${id}`)
+}
