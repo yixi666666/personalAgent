@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 _SELECT_SQL = (
     "SELECT id, code, name, aliases, official_website, category, competent_department, "
-    "province, city, edu_level, school_nature, tags, raw_remark, created_time, updated_time "
+    "province, city, edu_level, school_nature, tags, logo_url, raw_remark, created_time, updated_time "
     "FROM universities WHERE name = ?"
 )
 

@@ -146,14 +146,25 @@
       <div class="university-panel-body">
         <div class="university-detail-pane">
           <template v-if="universityDetail">
-            <h3 class="university-detail-title">{{ universityDetail.name }}</h3>
-            <a
-              v-if="universityDetail.official_website"
-              class="university-detail-website"
-              :href="universityDetail.official_website"
-              target="_blank"
-              rel="noopener noreferrer"
-            >{{ universityDetail.official_website }}</a>
+            <div class="university-detail-header">
+              <img
+                v-if="universityDetail.logo_url && !universityLogoFailed"
+                class="university-detail-logo"
+                :src="universityLogoSrc"
+                :alt="universityDetail.name"
+                @error="universityLogoFailed = true"
+              >
+              <h3 class="university-detail-title">{{ universityDetail.name }}</h3>
+            </div>
+            <div v-if="universityDetail.official_website" class="university-detail-website-row">
+              <span class="university-info-label">官网</span>
+              <a
+                class="university-detail-website"
+                :href="universityDetail.official_website"
+                target="_blank"
+                rel="noopener noreferrer"
+              >{{ universityDetail.official_website }}</a>
+            </div>
             <div class="university-info-list">
               <div v-for="row in universityInfoRows" :key="row.label" class="university-info-row">
                 <span class="university-info-label">{{ row.label }}</span>
@@ -273,10 +284,6 @@
       <div v-if="settingsView === 'main'" class="settings-list">
         <button class="settings-item" type="button" @click="settingsView = 'profile'">
           <strong>个人信息</strong>
-          <span class="settings-arrow">›</span>
-        </button>
-        <button v-if="isAdminRole" class="settings-item" type="button" @click="goAdmin">
-          <strong>管理控制台</strong>
           <span class="settings-arrow">›</span>
         </button>
         <button class="settings-item" type="button" @click="handleShortcutsClick">
@@ -406,7 +413,6 @@ const settingsView = ref('main')
 const profileForm = reactive({ username: '', display_name: '', email: '' })
 const profileRoleLabels = { guest: '游客', user: '普通用户', admin: '管理员', super_admin: '超级管理员' }
 const profileRoleLabel = computed(() => profileRoleLabels[authStore.currentUser?.role] || '用户')
-const isAdminRole = computed(() => ['admin', 'super_admin'].includes(authStore.currentUser?.role))
 
 function goAdmin() {
   settingsVisible.value = false
@@ -770,6 +776,18 @@ const universityTree = computed(() =>
 const currentUniversityNodeId = ref(null)
 const selectedNodeDetail = ref(null)
 const universityDetail = ref(null)
+const universityLogoFailed = ref(false)
+
+// 校徽走后端图片接口，logo_url 本身仅作为有无校徽的标志
+const universityLogoSrc = computed(() => {
+  if (!universityDetail.value) return ''
+  return `/v1/universities/logo?name=${encodeURIComponent(universityDetail.value.name)}`
+})
+
+// 切换学校时重置图片加载失败标记
+watch(universityDetail, () => {
+  universityLogoFailed.value = false
+})
 
 const currentBreadcrumbNode = computed(() =>
   currentUniversityNodeId.value
@@ -807,28 +825,32 @@ const universityDetailInflight = new Map()
 const CATEGORY_TEXT = { ordinary: '普通高校', adult: '成人高校' }
 
 // tags 字段代码 → 展示名称，顺序即展示顺序
-const TAG_TEXT_ORDER = ['985', '211', 'c9', 'double_first', 'mep', 'miit', 'mps', 'nhc']
+const TAG_TEXT_ORDER = ['985', '211', 'c9', 'double_first', 'qiangji', 'moe', 'mep', 'miit', 'mps', 'nhc', 'baoyan', 'double_high']
 const TAG_TEXT = {
   985: '985',
   211: '211',
   c9: 'C9联盟',
   double_first: '双一流',
+  double_high: '双高计划',
+  qiangji: '强基计划',
+  moe: '教育部直属',
   mep: '电力部直属',
   miit: '工信部直属',
   mps: '公安部直属',
   nhc: '卫健委直属',
+  baoyan: '保研资格',
 }
 
 const universityInfoRows = computed(() => {
   const info = universityDetail.value
   if (!info) return []
   const tags = (info.tags || [])
-    .map(code => TAG_TEXT[code] || code)
     .sort((a, b) => {
       const ia = TAG_TEXT_ORDER.indexOf(a)
       const ib = TAG_TEXT_ORDER.indexOf(b)
       return (ia === -1 ? TAG_TEXT_ORDER.length : ia) - (ib === -1 ? TAG_TEXT_ORDER.length : ib)
     })
+    .map(code => TAG_TEXT[code] || code)
   return [
     { label: '学校标识码', value: info.code },
     { label: '别名', value: (info.aliases || []).join('、') },
@@ -1353,17 +1375,47 @@ onBeforeUnmount(() => {
   overflow: auto;
 }
 
+.university-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.university-detail-logo {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: contain;
+  background: #f5f7fa;
+  border: 1px solid #e4e7ed;
+}
+
 .university-detail-title {
-  margin: 2px 0 6px;
-  font-size: 16px;
+  margin: 0;
+  font-size: 28px;
+  line-height: 2;
+  position: relative;
+  top: 0px;
   font-weight: 600;
   color: #303133;
   word-break: break-all;
+  text-align: center;
+}
+
+.university-detail-website-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .university-detail-website {
-  display: inline-block;
-  margin-bottom: 10px;
+  flex: 1;
+  min-width: 0;
   color: #409eff;
   font-size: 13px;
   word-break: break-all;

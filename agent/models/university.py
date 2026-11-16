@@ -16,6 +16,7 @@ class UniversityInfo(BaseModel):
     edu_level: Optional[str] = None             # 办学层次：本科 / 专科
     school_nature: Optional[str] = None         # 办学性质：公办 / 民办
     tags: list[str] = []                        # 荣誉/隶属标签（库中为 JSON 数组字符串）
+    logo_url: Optional[str] = None              # 校徽图片相对路径（如 data/university_logos/{code}.jpg）
     raw_remark: Optional[str] = None            # 教育部名单原始备注
     created_time: Optional[int] = None
     updated_time: Optional[int] = None
