@@ -26,6 +26,8 @@ from agent.models.admin import (
     AdminFeedbackReasonStat,
     AdminFeedbackReasonUpdate,
     AdminFeedbackStats,
+    AdminUniversityItem,
+    AdminUniversityUpdate,
     AdminUserItem,
     AdminUserUpdate,
     ModelConfigCreate,
@@ -35,9 +37,11 @@ from agent.models.admin import (
     SystemConfigItem,
     SystemConfigUpdate,
 )
+from agent.models.university import UniversityInfo
 from agent.services.auth import require_admin
 from agent.services.model_service import encrypt_api_key
 from agent.services.session import get_session_manager
+from agent.services.university import get_university_by_id, list_universities
 from agent.models.session import ToolCallDetail
 
 logger = logging.getLogger(__name__)
@@ -724,3 +728,70 @@ def feedback_context(feedback_id: str):
 def admin_tool_calls(message_id: str = Query(..., description="消息ID")):
     """工具详情懒加载（管理端共用用户侧逻辑，不做会话归属校验）"""
     return get_session_manager().get_tool_calls_by_message(message_id)
+
+
+# ========== 高校信息 (universities) ==========
+
+# universities 可编辑字段：JSON 数组字段（aliases / tags）单独序列化入库
+_UNIVERSITY_JSON_FIELDS = {"aliases", "tags"}
+
+
+def _university_item(info: dict) -> AdminUniversityItem:
+    return AdminUniversityItem(
+        **info,
+        has_logo=bool(info.get("logo_url")),
+    )
+
+
+@router.get("/universities", response_model=list[AdminUniversityItem])
+def admin_list_universities():
+    """全部高校基础信息列表（不含实力数据），前端本地筛选与分页"""
+    return [_university_item(info) for info in list_universities()]
+
+
+@router.get("/universities/{university_id}", response_model=UniversityInfo)
+def admin_get_university(university_id: str):
+    """高校详情（含排名 / 双一流建设学科 / 学科评估）"""
+    info = get_university_by_id(university_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="高校不存在")
+    return UniversityInfo(**info)
+
+
+@router.patch("/universities/{university_id}", response_model=UniversityInfo)
+def admin_update_university(university_id: str, payload: AdminUniversityUpdate):
+    db = get_db()
+    row = db.execute("SELECT id, name FROM universities WHERE id = ?", (university_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="高校不存在")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates:
+        new_name = (updates["name"] or "").strip()
+        if not new_name:
+            raise _bad_request(ValueError("高校名称不能为空"))
+        exists = db.execute(
+            "SELECT 1 FROM universities WHERE name = ? AND id != ?",
+            (new_name, university_id),
+        ).fetchone()
+        if exists:
+            raise _bad_request(ValueError(f"高校名称「{new_name}」已存在"))
+        updates["name"] = new_name
+
+    assignments, params = [], []
+    for field, value in updates.items():
+        if field in _UNIVERSITY_JSON_FIELDS:
+            value = json.dumps(value, ensure_ascii=False)
+        assignments.append(f"{field} = ?")
+        params.append(value)
+    assignments.append("updated_time = ?")
+    params.append(_utc_now())
+    params.append(university_id)
+    db.execute(
+        f"UPDATE universities SET {', '.join(assignments)} WHERE id = ?",
+        params,
+    )
+    db.commit()
+
+    info = get_university_by_id(university_id)
+    return UniversityInfo(**info)

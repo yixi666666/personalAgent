@@ -384,3 +384,18 @@ export async function adminUpdateFeedbackReason(id, payload) {
 export async function adminDeleteFeedbackReason(id) {
   await api.delete(`/admin/feedbacks/reasons/${id}`)
 }
+
+export async function adminListUniversities() {
+  const { data } = await api.get('/admin/universities')
+  return data
+}
+
+export async function adminGetUniversity(id) {
+  const { data } = await api.get(`/admin/universities/${id}`)
+  return data
+}
+
+export async function adminUpdateUniversity(id, payload) {
+  const { data } = await api.patch(`/admin/universities/${id}`, payload)
+  return data
+}

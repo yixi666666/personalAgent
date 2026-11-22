@@ -213,3 +213,44 @@ class AdminFeedbackContext(BaseModel):
     """反馈上下文：与用户侧会话详情接口完全一致的数据 + 被评价消息定位"""
     feedback_message_id: str
     session: SessionDetailResponse
+
+
+# ========== 高校信息 (universities) ==========
+
+class AdminUniversityItem(BaseModel):
+    id: str
+    code: Optional[str] = None
+    name: Optional[str] = None
+    aliases: list[str] = []
+    official_website: Optional[str] = None
+    category: Optional[str] = None
+    competent_department: Optional[str] = None
+    province: Optional[str] = None
+    city: Optional[str] = None
+    edu_level: Optional[str] = None
+    school_nature: Optional[str] = None
+    tags: list[str] = []
+    master_first: Optional[int] = None
+    doctor_first: Optional[int] = None
+    has_logo: bool = False
+    logo_url: Optional[str] = None
+    raw_remark: Optional[str] = None
+    created_time: Optional[int] = None
+    updated_time: Optional[int] = None
+
+
+class AdminUniversityUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, description="高校全称，全局唯一")
+    aliases: Optional[list[str]] = Field(default=None, description="别名列表，空列表表示清空")
+    official_website: Optional[str] = None
+    category: Optional[str] = Field(default=None, description="ordinary | adult")
+    competent_department: Optional[str] = None
+    province: Optional[str] = None
+    city: Optional[str] = None
+    edu_level: Optional[str] = None
+    school_nature: Optional[str] = None
+    tags: Optional[list[str]] = Field(default=None, description="标签代码列表，空列表表示清空")
+    master_first: Optional[int] = None
+    doctor_first: Optional[int] = None
+    logo_url: Optional[str] = None
+    raw_remark: Optional[str] = None

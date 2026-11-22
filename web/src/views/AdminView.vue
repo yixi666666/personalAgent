@@ -27,6 +27,10 @@
           <el-icon><User /></el-icon>
           <span>用户管理</span>
         </el-menu-item>
+        <el-menu-item index="universities">
+          <el-icon><School /></el-icon>
+          <span>高校信息</span>
+        </el-menu-item>
         <el-menu-item index="announcements">
           <el-icon><Bell /></el-icon>
           <span>公告管理</span>
@@ -186,6 +190,112 @@
               background
             />
           </div>
+        </div>
+      </template>
+
+      <!-- 高校信息 -->
+      <template v-else-if="activeTab === 'universities'">
+        <header class="content-header">
+          <div>
+            <h2>高校信息</h2>
+            <p class="content-desc">全国高校基础数据总览与维护；修改名称/别名后需运行 sync_universities.py --rebuild-vec 同步向量索引</p>
+          </div>
+          <div class="content-actions">
+            <el-button @click="loadUniversities">刷新</el-button>
+          </div>
+        </header>
+
+        <div class="stat-cards">
+          <div
+            v-for="stat in universityStats"
+            :key="stat.label"
+            class="stat-card stat-card-clickable"
+            :class="{ 'stat-card-active': isStatActive(stat) }"
+            :title="stat.filter ? '点击筛选' : '点击清空筛选'"
+            @click="toggleStatFilter(stat)"
+          >
+            <span class="stat-label">{{ stat.label }}</span>
+            <span class="stat-value">{{ stat.value }}</span>
+          </div>
+        </div>
+
+        <div class="feedback-filters">
+          <el-input
+            v-model="universityFilter.keyword"
+            placeholder="搜索名称 / 别名 / 标识码"
+            clearable
+            style="width: 220px"
+            @input="universityPage = 1"
+          />
+          <el-select v-model="universityFilter.province" placeholder="全部省份" clearable filterable style="width: 150px" @change="universityPage = 1">
+            <el-option v-for="p in provinceOptions" :key="p" :label="p" :value="p" />
+          </el-select>
+          <el-select v-model="universityFilter.tag" placeholder="全部标签" clearable style="width: 140px" @change="universityPage = 1">
+            <el-option v-for="t in TAG_OPTIONS" :key="t.value" :label="t.label" :value="t.value" />
+          </el-select>
+          <el-select v-model="universityFilter.edu_level" placeholder="全部层次" clearable style="width: 120px" @change="universityPage = 1">
+            <el-option label="本科" value="本科" />
+            <el-option label="专科" value="专科" />
+          </el-select>
+          <el-select v-model="universityFilter.category" placeholder="全部类型" clearable style="width: 130px" @change="universityPage = 1">
+            <el-option label="普通高校" value="ordinary" />
+            <el-option label="成人高校" value="adult" />
+          </el-select>
+        </div>
+
+        <div class="universities-table-wrap">
+          <el-table v-loading="universitiesLoading" :data="pagedUniversities" size="small" border height="100%" class="content-table universities-table">
+            <el-table-column label="校徽" width="64" align="center">
+              <template #default="{ row }">
+                <el-image
+                  v-if="row.has_logo"
+                  :src="universityLogoSrc(row.name)"
+                  fit="contain"
+                  class="university-logo"
+                  lazy
+                />
+                <span v-else class="stat-empty">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="名称" min-width="170" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.name }}</template>
+            </el-table-column>
+            <el-table-column prop="code" label="标识码" width="110" />
+            <el-table-column label="所在地" width="130" show-overflow-tooltip>
+              <template #default="{ row }">{{ [row.province, row.city].filter(Boolean).join(' ') || '-' }}</template>
+            </el-table-column>
+            <el-table-column prop="competent_department" label="主管部门" width="100" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.competent_department || '-' }}</template>
+            </el-table-column>
+            <el-table-column prop="edu_level" label="层次" width="70" />
+            <el-table-column prop="school_nature" label="性质" width="70" />
+            <el-table-column label="类型" width="90">
+              <template #default="{ row }">{{ CATEGORY_TEXT[row.category] || row.category || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="标签" min-width="200">
+              <template #default="{ row }">
+                <template v-if="sortedTagTexts(row).length">
+                  <el-tag v-for="text in sortedTagTexts(row)" :key="text" size="small" class="cap-tag">{{ text }}</el-tag>
+                </template>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openUniversityDetail(row)">详情</el-button>
+                <el-button link type="primary" @click="openUniversityDialog(row)">编辑</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <div class="table-pagination">
+          <el-pagination
+            v-model:current-page="universityPage"
+            :total="filteredUniversities.length"
+            :page-size="UNIVERSITY_PAGE_SIZE"
+            layout="total, prev, pager, next"
+            background
+          />
         </div>
       </template>
 
@@ -597,6 +707,131 @@
         </template>
       </div>
     </el-dialog>
+    <!-- 高校详情弹窗 -->
+    <el-dialog v-model="universityDetailVisible" :title="universityDetailData?.name || '高校详情'" width="780px" align-center top="4vh">
+      <div v-loading="universityDetailLoading" class="context-wrap">
+        <template v-if="universityDetailData">
+          <div class="university-detail-head">
+            <el-image
+              v-if="universityDetailData.logo_url"
+              :src="universityLogoSrc(universityDetailData.name)"
+              fit="contain"
+              class="university-logo university-logo-lg"
+            />
+            <div>
+              <p class="university-detail-name">{{ universityDetailData.name }}</p>
+              <div class="university-detail-tags">
+                <el-tag v-for="text in sortedTagTexts(universityDetailData)" :key="text" size="small" class="cap-tag">{{ text }}</el-tag>
+                <span v-if="!sortedTagTexts(universityDetailData).length" class="stat-empty">暂无标签</span>
+              </div>
+            </div>
+          </div>
+
+          <el-descriptions :column="2" size="small" border class="university-desc">
+            <el-descriptions-item label="学校标识码">{{ universityDetailData.code || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="别名">{{ (universityDetailData.aliases || []).join('、') || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="学校类型">{{ CATEGORY_TEXT[universityDetailData.category] || universityDetailData.category || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="主管部门">{{ universityDetailData.competent_department || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="所在地">{{ [universityDetailData.province, universityDetailData.city].filter(Boolean).join(' ') || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="办学层次">{{ universityDetailData.edu_level || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="办学性质">{{ universityDetailData.school_nature || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="官方网站">
+              <a v-if="universityDetailData.official_website" :href="universityDetailData.official_website" target="_blank" class="university-link">{{ universityDetailData.official_website }}</a>
+              <span v-else>-</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="一级学科硕士点">{{ universityDetailData.master_first ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="一级学科博士点">{{ universityDetailData.doctor_first ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="备注" :span="2">{{ universityDetailData.raw_remark || '-' }}</el-descriptions-item>
+          </el-descriptions>
+
+          <template v-if="universityRankingRows.length">
+            <h3 class="university-section-title">排名榜单</h3>
+            <el-descriptions :column="1" size="small" border class="university-desc">
+              <el-descriptions-item v-for="row in universityRankingRows" :key="row.label" :label="row.label">{{ row.value }}</el-descriptions-item>
+            </el-descriptions>
+          </template>
+
+          <template v-if="universityDoubleFirstRows.length">
+            <h3 class="university-section-title">双一流建设学科</h3>
+            <el-descriptions :column="1" size="small" border class="university-desc">
+              <el-descriptions-item v-for="row in universityDoubleFirstRows" :key="row.label" :label="row.label">{{ row.value }}</el-descriptions-item>
+            </el-descriptions>
+          </template>
+
+          <template v-if="universityEvaluationRows.length">
+            <h3 class="university-section-title">学科评估</h3>
+            <el-descriptions :column="1" size="small" border class="university-desc">
+              <el-descriptions-item v-for="row in universityEvaluationRows" :key="row.label" :label="row.label">{{ row.value }}</el-descriptions-item>
+            </el-descriptions>
+          </template>
+        </template>
+      </div>
+    </el-dialog>
+
+    <!-- 高校编辑弹窗 -->
+    <el-dialog v-model="universityDialogVisible" title="编辑高校" width="640px" align-center>
+      <el-form :model="universityForm" label-width="120px">
+        <el-form-item label="高校全称" required>
+          <el-input v-model="universityForm.name" placeholder="全局唯一" />
+        </el-form-item>
+        <el-form-item label="别名">
+          <el-input v-model="universityForm.aliasesText" type="textarea" :rows="2" placeholder="用顿号、逗号或空格分隔" />
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-checkbox-group v-model="universityForm.tags" class="university-tag-group">
+            <el-checkbox v-for="t in TAG_OPTIONS" :key="t.value" :value="t.value">{{ t.label }}</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+        <el-form-item label="官方网站">
+          <el-input v-model="universityForm.official_website" />
+        </el-form-item>
+        <el-form-item label="学校类型">
+          <el-select v-model="universityForm.category" clearable style="width: 200px">
+            <el-option label="普通高校" value="ordinary" />
+            <el-option label="成人高校" value="adult" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="主管部门">
+          <el-input v-model="universityForm.competent_department" />
+        </el-form-item>
+        <el-form-item label="所在省">
+          <el-select v-model="universityForm.province" clearable filterable style="width: 200px">
+            <el-option v-for="p in provinceOptions" :key="p" :label="p" :value="p" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="所在市">
+          <el-input v-model="universityForm.city" />
+        </el-form-item>
+        <el-form-item label="办学层次">
+          <el-select v-model="universityForm.edu_level" clearable style="width: 200px">
+            <el-option label="本科" value="本科" />
+            <el-option label="专科" value="专科" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="办学性质">
+          <el-select v-model="universityForm.school_nature" clearable style="width: 200px">
+            <el-option label="公办" value="公办" />
+            <el-option label="民办" value="民办" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="一级学科硕士点">
+          <el-input-number v-model="universityForm.master_first" :min="0" />
+        </el-form-item>
+        <el-form-item label="一级学科博士点">
+          <el-input-number v-model="universityForm.doctor_first" :min="0" />
+        </el-form-item>
+        <el-form-item label="校徽路径">
+          <el-input v-model="universityForm.logo_url" placeholder="如 data/university_logos/{code}.jpg" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="universityForm.raw_remark" type="textarea" :rows="2" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="universityDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="universitySaving" @click="saveUniversity">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -604,7 +839,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Bell, ChatDotRound, Cpu, Pointer, Setting, User } from '@element-plus/icons-vue'
+import { Bell, ChatDotRound, Cpu, Pointer, School, Setting, User } from '@element-plus/icons-vue'
 import MessageList from '../components/MessageList.vue'
 import MsgDotNav from '../components/MsgDotNav.vue'
 import { useAuthStore } from '../stores/auth'
@@ -630,8 +865,11 @@ import {
   adminUpdateConfig,
   adminUpdateFeedbackReason,
   adminUpdateModel,
+  adminUpdateUniversity,
   adminUpdateUser,
   adminToolCalls,
+  adminGetUniversity,
+  adminListUniversities,
 } from '../api'
 
 const router = useRouter()
@@ -1208,6 +1446,264 @@ async function removeReason(row) {
   }
 }
 
+// ==== 高校信息 ====
+
+const CATEGORY_TEXT = { ordinary: '普通高校', adult: '成人高校' }
+
+// tags 字段代码 → 展示名称，顺序即展示顺序（与聊天页高校面板一致）
+const TAG_TEXT_ORDER = ['985', '211', 'c9', 'double_first', 'qiangji', 'moe', 'mep', 'miit', 'mps', 'nhc', 'baoyan', 'double_high']
+const TAG_TEXT = {
+  985: '985',
+  211: '211',
+  c9: 'C9联盟',
+  double_first: '双一流',
+  double_high: '双高计划',
+  qiangji: '强基计划',
+  moe: '教育部直属',
+  mep: '电力部直属',
+  miit: '工信部直属',
+  mps: '公安部直属',
+  nhc: '卫健委直属',
+  baoyan: '保研资格',
+}
+const TAG_OPTIONS = TAG_TEXT_ORDER.map(code => ({ value: code, label: TAG_TEXT[code] }))
+
+const RANKING_SOURCE_TEXT = { qs: 'QS', the: 'THE', usnews: 'U.S. News', ruanke: '软科', xyh: '校友会' }
+const DOUBLE_FIRST_ROUND_YEAR = { 1: 2017, 2: 2022 }
+
+const universities = ref([])
+const universitiesLoading = ref(false)
+const UNIVERSITY_PAGE_SIZE = 15
+const universityPage = ref(1)
+const universityFilter = reactive({ keyword: '', province: '', tag: '', edu_level: '', category: '' })
+
+const provinceOptions = computed(() => [...new Set(universities.value.map(u => u.province).filter(Boolean))])
+
+/** 统计卡片：filter 描述点击后应用的筛选条件，null 表示点击清空全部筛选 */
+const universityStats = computed(() => {
+  const list = universities.value
+  const tagCount = code => list.filter(u => (u.tags || []).includes(code)).length
+  return [
+    { label: '高校总数', value: list.length, filter: null },
+    { label: '本科', value: list.filter(u => u.edu_level === '本科').length, filter: { key: 'edu_level', value: '本科' } },
+    { label: '985工程', value: tagCount('985'), filter: { key: 'tag', value: '985' } },
+    { label: '211工程', value: tagCount('211'), filter: { key: 'tag', value: '211' } },
+    { label: '双一流', value: tagCount('double_first'), filter: { key: 'tag', value: 'double_first' } },
+    { label: '保研资格', value: tagCount('baoyan'), filter: { key: 'tag', value: 'baoyan' } },
+    { label: '双高计划', value: tagCount('double_high'), filter: { key: 'tag', value: 'double_high' } },
+  ]
+})
+
+function isStatActive(stat) {
+  return Boolean(stat.filter) && universityFilter[stat.filter.key] === stat.filter.value
+}
+
+/** 点击统计卡片切换筛选：再次点击当前卡片取消，点「高校总数」清空全部筛选 */
+function toggleStatFilter(stat) {
+  if (!stat.filter) {
+    Object.assign(universityFilter, { keyword: '', province: '', tag: '', edu_level: '', category: '' })
+    universityPage.value = 1
+    return
+  }
+  const { key, value } = stat.filter
+  const active = isStatActive(stat)
+  universityFilter.tag = ''
+  universityFilter.edu_level = ''
+  universityFilter.category = ''
+  if (!active) universityFilter[key] = value
+  universityPage.value = 1
+}
+
+const filteredUniversities = computed(() => {
+  const kw = universityFilter.keyword.trim().toLowerCase()
+  return universities.value.filter(u => {
+    if (universityFilter.province && u.province !== universityFilter.province) return false
+    if (universityFilter.tag && !(u.tags || []).includes(universityFilter.tag)) return false
+    if (universityFilter.edu_level && u.edu_level !== universityFilter.edu_level) return false
+    if (universityFilter.category && u.category !== universityFilter.category) return false
+    if (kw) {
+      const hay = [u.name, u.code, ...(u.aliases || [])].filter(Boolean).join(' ').toLowerCase()
+      if (!hay.includes(kw)) return false
+    }
+    return true
+  })
+})
+
+const pagedUniversities = computed(() => {
+  const start = (universityPage.value - 1) * UNIVERSITY_PAGE_SIZE
+  return filteredUniversities.value.slice(start, start + UNIVERSITY_PAGE_SIZE)
+})
+
+/** tags 代码列表 → 按固定顺序映射为展示名称 */
+function sortedTagTexts(row) {
+  return (row.tags || [])
+    .slice()
+    .sort((a, b) => {
+      const ia = TAG_TEXT_ORDER.indexOf(a)
+      const ib = TAG_TEXT_ORDER.indexOf(b)
+      return (ia === -1 ? TAG_TEXT_ORDER.length : ia) - (ib === -1 ? TAG_TEXT_ORDER.length : ib)
+    })
+    .map(code => TAG_TEXT[code] || code)
+}
+
+function universityLogoSrc(name) {
+  return `/v1/universities/logo?name=${encodeURIComponent(name)}`
+}
+
+async function loadUniversities() {
+  universitiesLoading.value = true
+  try {
+    universities.value = await adminListUniversities()
+    const maxPage = Math.max(1, Math.ceil(filteredUniversities.value.length / UNIVERSITY_PAGE_SIZE))
+    if (universityPage.value > maxPage) universityPage.value = maxPage
+  } catch (error) {
+    handleApiError(error, '加载高校列表失败')
+  } finally {
+    universitiesLoading.value = false
+  }
+}
+
+// ---- 高校详情 ----
+
+const universityDetailVisible = ref(false)
+const universityDetailLoading = ref(false)
+const universityDetailData = ref(null)
+
+const universityRankingRows = computed(() => {
+  const info = universityDetailData.value
+  if (!info) return []
+  return (info.rankings || []).map(r => {
+    const source = RANKING_SOURCE_TEXT[r.source] || r.source || '未知榜单'
+    const rank = r.rank_raw || (r.rank_num != null ? String(r.rank_num) : '')
+    const parts = []
+    if (rank) parts.push(`第${rank}名`)
+    if (r.score != null) parts.push(`${r.score}分`)
+    return { label: `${source} ${r.year ?? ''}`.trim(), value: parts.join(' · ') || '-' }
+  })
+})
+
+const universityDoubleFirstRows = computed(() => {
+  const info = universityDetailData.value
+  if (!info) return []
+  return (info.double_first_subjects || []).map(entry => {
+    const year = DOUBLE_FIRST_ROUND_YEAR[entry.round]
+    const label = year ? `第${entry.round}轮(${year})` : `第${entry.round}轮`
+    let value
+    if ((entry.subjects || []).length) {
+      value = entry.subjects.map(s => s.name).filter(Boolean).join('、')
+    } else if (entry.autonomous === 1) {
+      value = '自主确定建设学科'
+    } else {
+      value = entry.note || '-'
+    }
+    return { label, value }
+  })
+})
+
+const universityEvaluationRows = computed(() => {
+  const info = universityDetailData.value
+  if (!info) return []
+  const rows = []
+  for (const entry of (info.discipline_evaluations || [])) {
+    // 数据已按档位降序排列，分组时保留首次出现的档位顺序
+    const gradeOrder = []
+    const gradeMap = new Map()
+    for (const d of (entry.disciplines || [])) {
+      if (!d.grade || !d.name) continue
+      if (!gradeMap.has(d.grade)) {
+        gradeMap.set(d.grade, [])
+        gradeOrder.push(d.grade)
+      }
+      gradeMap.get(d.grade).push(d.name)
+    }
+    for (const grade of gradeOrder) {
+      const label = entry.round === 4 ? grade : `第${entry.round}轮 ${grade}`
+      rows.push({ label, value: gradeMap.get(grade).join('、') })
+    }
+  }
+  return rows
+})
+
+async function openUniversityDetail(row) {
+  universityDetailVisible.value = true
+  universityDetailLoading.value = true
+  universityDetailData.value = null
+  try {
+    universityDetailData.value = await adminGetUniversity(row.id)
+  } catch (error) {
+    handleApiError(error, '加载高校详情失败')
+    universityDetailVisible.value = false
+  } finally {
+    universityDetailLoading.value = false
+  }
+}
+
+// ---- 高校编辑 ----
+
+const universityDialogVisible = ref(false)
+const universitySaving = ref(false)
+const universityForm = reactive({
+  id: null, name: '', aliasesText: '', official_website: '', category: '',
+  competent_department: '', province: '', city: '', edu_level: '', school_nature: '',
+  tags: [], master_first: null, doctor_first: null, logo_url: '', raw_remark: '',
+})
+
+function openUniversityDialog(row) {
+  Object.assign(universityForm, {
+    id: row?.id || null,
+    name: row?.name || '',
+    aliasesText: (row?.aliases || []).join('、'),
+    official_website: row?.official_website || '',
+    category: row?.category || '',
+    competent_department: row?.competent_department || '',
+    province: row?.province || '',
+    city: row?.city || '',
+    edu_level: row?.edu_level || '',
+    school_nature: row?.school_nature || '',
+    tags: [...(row?.tags || [])],
+    master_first: row?.master_first ?? null,
+    doctor_first: row?.doctor_first ?? null,
+    logo_url: row?.logo_url || '',
+    raw_remark: row?.raw_remark || '',
+  })
+  universityDialogVisible.value = true
+}
+
+async function saveUniversity() {
+  if (!universityForm.name.trim()) {
+    ElMessage.warning('请填写高校全称')
+    return
+  }
+  universitySaving.value = true
+  try {
+    const aliases = universityForm.aliasesText.split(/[、,，;；\s]+/).map(s => s.trim()).filter(Boolean)
+    const payload = {
+      name: universityForm.name.trim(),
+      aliases,
+      official_website: universityForm.official_website || null,
+      category: universityForm.category || null,
+      competent_department: universityForm.competent_department || null,
+      province: universityForm.province || null,
+      city: universityForm.city || null,
+      edu_level: universityForm.edu_level || null,
+      school_nature: universityForm.school_nature || null,
+      tags: universityForm.tags,
+      master_first: universityForm.master_first,
+      doctor_first: universityForm.doctor_first,
+      logo_url: universityForm.logo_url || null,
+      raw_remark: universityForm.raw_remark || null,
+    }
+    await adminUpdateUniversity(universityForm.id, payload)
+    ElMessage.success('高校信息已保存')
+    universityDialogVisible.value = false
+    await loadUniversities()
+  } catch (error) {
+    handleApiError(error, '保存高校信息失败')
+  } finally {
+    universitySaving.value = false
+  }
+}
+
 // ==== 退出 ====
 
 async function handleLogout() {
@@ -1224,6 +1720,7 @@ onMounted(() => {
   loadConfigs()
   loadModels()
   loadUsers()
+  loadUniversities()
   loadAnnouncements()
   loadFeedbackAll()
 })
@@ -1433,6 +1930,67 @@ onMounted(() => {
   color: #909399;
 }
 
+/* ===== 高校信息 ===== */
+
+/* 与用户管理一致：表格占满剩余高度、表体内滚动、分页固定底部 */
+.universities-table-wrap {
+  flex: 1;
+  min-height: 0;
+}
+
+.university-logo {
+  width: 36px;
+  height: 36px;
+}
+
+.university-logo-lg {
+  width: 56px;
+  height: 56px;
+}
+
+.university-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.university-detail-name {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.university-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.university-desc {
+  margin-bottom: 4px;
+}
+
+.university-section-title {
+  margin: 14px 0 8px;
+  font-size: 14px;
+  color: #303133;
+}
+
+.university-link {
+  color: #409eff;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.university-tag-group {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px 8px;
+  width: 100%;
+}
+
 /* ===== 反馈管理 ===== */
 
 .stat-cards {
@@ -1451,6 +2009,20 @@ onMounted(() => {
   background: #fff;
   border-radius: 8px;
   border: 1px solid #e4e7ed;
+}
+
+.stat-card-clickable {
+  cursor: pointer;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.stat-card-clickable:hover {
+  border-color: #409eff;
+}
+
+.stat-card-active {
+  border-color: #409eff;
+  background: #ecf5ff;
 }
 
 .stat-card-reasons {

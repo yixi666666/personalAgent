@@ -171,6 +171,27 @@
                 <span class="university-info-value">{{ row.value }}</span>
               </div>
             </div>
+            <div v-if="universityRankingRows.length" class="university-strength-section">
+              <div class="university-strength-title">排名榜单</div>
+              <div v-for="row in universityRankingRows" :key="row.label" class="university-info-row">
+                <span class="university-info-label">{{ row.label }}</span>
+                <span class="university-info-value">{{ row.value }}</span>
+              </div>
+            </div>
+            <div v-if="universityDoubleFirstRows.length" class="university-strength-section">
+              <div class="university-strength-title">双一流建设学科</div>
+              <div v-for="row in universityDoubleFirstRows" :key="row.label" class="university-info-row">
+                <span class="university-info-label">{{ row.label }}</span>
+                <span class="university-info-value">{{ row.value }}</span>
+              </div>
+            </div>
+            <div v-if="universityEvaluationRows.length" class="university-strength-section">
+              <div class="university-strength-title">学科评估</div>
+              <div v-for="row in universityEvaluationRows" :key="row.label" class="university-info-row">
+                <span class="university-info-label">{{ row.label }}</span>
+                <span class="university-info-value">{{ row.value }}</span>
+              </div>
+            </div>
           </template>
           <template v-else-if="selectedNodeDetail">
             <h3 class="university-detail-title">{{ selectedNodeDetail.label }}</h3>
@@ -860,8 +881,71 @@ const universityInfoRows = computed(() => {
     { label: '所在地', value: [info.province, info.city].filter(Boolean).join(' ') },
     { label: '办学层次', value: info.edu_level },
     { label: '办学性质', value: info.school_nature },
+    { label: '一级学科硕士点', value: info.master_first },
+    { label: '一级学科博士点', value: info.doctor_first },
     { label: '备注', value: info.raw_remark },
   ].filter(row => row.value)
+})
+
+// 榜单来源代码 → 展示名称
+const RANKING_SOURCE_TEXT = { qs: 'QS', the: 'THE', usnews: 'U.S. News', ruanke: '软科', xyh: '校友会' }
+
+// 双一流建设轮次 → 年份
+const DOUBLE_FIRST_ROUND_YEAR = { 1: 2017, 2: 2022 }
+
+const universityRankingRows = computed(() => {
+  const info = universityDetail.value
+  if (!info) return []
+  return (info.rankings || []).map(r => {
+    const source = RANKING_SOURCE_TEXT[r.source] || r.source || '未知榜单'
+    const rank = r.rank_raw || (r.rank_num != null ? String(r.rank_num) : '')
+    const parts = []
+    if (rank) parts.push(`第${rank}名`)
+    if (r.score != null) parts.push(`${r.score}分`)
+    return { label: `${source} ${r.year ?? ''}`.trim(), value: parts.join(' · ') || '-' }
+  })
+})
+
+const universityDoubleFirstRows = computed(() => {
+  const info = universityDetail.value
+  if (!info) return []
+  return (info.double_first_subjects || []).map(entry => {
+    const year = DOUBLE_FIRST_ROUND_YEAR[entry.round]
+    const label = year ? `第${entry.round}轮(${year})` : `第${entry.round}轮`
+    let value
+    if ((entry.subjects || []).length) {
+      value = entry.subjects.map(s => s.name).filter(Boolean).join('、')
+    } else if (entry.autonomous === 1) {
+      value = '自主确定建设学科'
+    } else {
+      value = entry.note || '-'
+    }
+    return { label, value }
+  })
+})
+
+const universityEvaluationRows = computed(() => {
+  const info = universityDetail.value
+  if (!info) return []
+  const rows = []
+  for (const entry of (info.discipline_evaluations || [])) {
+    // 数据已按档位降序排列，分组时保留首次出现的档位顺序
+    const gradeOrder = []
+    const gradeMap = new Map()
+    for (const d of (entry.disciplines || [])) {
+      if (!d.grade || !d.name) continue
+      if (!gradeMap.has(d.grade)) {
+        gradeMap.set(d.grade, [])
+        gradeOrder.push(d.grade)
+      }
+      gradeMap.get(d.grade).push(d.name)
+    }
+    for (const grade of gradeOrder) {
+      const label = entry.round === 4 ? grade : `第${entry.round}轮 ${grade}`
+      rows.push({ label, value: gradeMap.get(grade).join('、') })
+    }
+  }
+  return rows
 })
 
 /**
@@ -1436,7 +1520,7 @@ onBeforeUnmount(() => {
 
 .university-info-label {
   flex-shrink: 0;
-  width: 76px;
+  width: 92px;
   color: #909399;
 }
 
@@ -1445,6 +1529,21 @@ onBeforeUnmount(() => {
   min-width: 0;
   color: #303133;
   word-break: break-all;
+}
+
+.university-strength-section {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid #ebeef5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.university-strength-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #606266;
 }
 
 .university-detail-empty {
