@@ -154,7 +154,12 @@
                 :alt="universityDetail.name"
                 @error="universityLogoFailed = true"
               >
-              <h3 class="university-detail-title">{{ universityDetail.name }}</h3>
+              <div class="university-detail-head-info">
+                <h3 class="university-detail-title">{{ universityDetail.name }}</h3>
+                <div v-if="universityTagTexts.length" class="university-detail-tags">
+                  <span v-for="text in universityTagTexts" :key="text" class="university-tag">{{ text }}</span>
+                </div>
+              </div>
             </div>
             <div v-if="universityDetail.official_website" class="university-detail-website-row">
               <span class="university-info-label">官网</span>
@@ -172,10 +177,32 @@
               </div>
             </div>
             <div v-if="universityRankingRows.length" class="university-strength-section">
-              <div class="university-strength-title">排名榜单</div>
-              <div v-for="row in universityRankingRows" :key="row.label" class="university-info-row">
-                <span class="university-info-label">{{ row.label }}</span>
-                <span class="university-info-value">{{ row.value }}</span>
+              <div class="university-strength-title-row">
+                <span class="university-strength-title">排名榜单</span>
+                <el-popover placement="bottom-start" trigger="click" :width="420">
+                  <template #reference>
+                    <svg class="university-strength-hint" viewBox="0 0 1024 1024" aria-label="榜单说明">
+                      <path fill="currentColor" d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64z m-32 232c0-4.4 3.6-8 8-8h48c4.4 0 8 3.6 8 8v272c0 4.4-3.6 8-8 8h-48c-4.4 0-8-3.6-8-8V296z m32 440c-26.5 0-48-21.5-48-48s21.5-48 48-48 48 21.5 48 48-21.5 48-48 48z" />
+                    </svg>
+                  </template>
+                  <div class="ranking-detail">
+                    <div v-for="row in universityRankingRows" :key="row.key" class="ranking-detail-item">
+                      <a v-if="rankingSourceUrl(row)" class="ranking-detail-head ranking-detail-link" :href="rankingSourceUrl(row)" target="_blank" rel="noopener">{{ row.label }} · {{ row.year || '年份未知' }}</a>
+                      <p v-else class="ranking-detail-head">{{ row.label }} · {{ row.year || '年份未知' }}</p>
+                      <p class="ranking-detail-score">排名 {{ row.value }} · 分数 {{ row.score != null ? row.score : '-' }} / {{ row.maxScore != null ? row.maxScore : '-' }}</p>
+                      <p class="ranking-detail-intro">{{ RANKING_SOURCE_INTRO[row.sourceKey] || '暂无介绍' }}</p>
+                    </div>
+                    <p class="ranking-detail-note">说明：分数中的分母为该榜单当年榜首对应的分数</p>
+                  </div>
+                </el-popover>
+              </div>
+              <div class="ranking-chip-list">
+                <div v-for="row in universityRankingRows" :key="row.key" class="ranking-chip">
+                  <span class="ranking-chip-source">{{ row.label }}</span>
+                  <span class="ranking-chip-rank" :class="{ 'ranking-chip-rank-sm': row.value.length > 5 }">
+                    <span v-if="medalSvg(row.rankNum)" class="ranking-medal" v-html="medalSvg(row.rankNum)"></span>{{ row.value }}
+                  </span>
+                </div>
               </div>
             </div>
             <div v-if="universityDoubleFirstRows.length" class="university-strength-section">
@@ -862,21 +889,26 @@ const TAG_TEXT = {
   baoyan: '保研资格',
 }
 
-const universityInfoRows = computed(() => {
+const universityTagTexts = computed(() => {
   const info = universityDetail.value
   if (!info) return []
-  const tags = (info.tags || [])
+  return (info.tags || [])
+    .slice()
     .sort((a, b) => {
       const ia = TAG_TEXT_ORDER.indexOf(a)
       const ib = TAG_TEXT_ORDER.indexOf(b)
       return (ia === -1 ? TAG_TEXT_ORDER.length : ia) - (ib === -1 ? TAG_TEXT_ORDER.length : ib)
     })
     .map(code => TAG_TEXT[code] || code)
+})
+
+const universityInfoRows = computed(() => {
+  const info = universityDetail.value
+  if (!info) return []
   return [
-    { label: '学校标识码', value: info.code },
     { label: '别名', value: (info.aliases || []).join('、') },
-    { label: '标签', value: tags.join('、') },
-    { label: '学校类型', value: CATEGORY_TEXT[info.category] || info.category },
+    // 普通高校为默认类型不展示，仅成人高校需要标识
+    { label: '学校类型', value: info.category === 'adult' ? CATEGORY_TEXT[info.category] || info.category : '' },
     { label: '主管部门', value: info.competent_department },
     { label: '所在地', value: [info.province, info.city].filter(Boolean).join(' ') },
     { label: '办学层次', value: info.edu_level },
@@ -888,7 +920,30 @@ const universityInfoRows = computed(() => {
 })
 
 // 榜单来源代码 → 展示名称
-const RANKING_SOURCE_TEXT = { qs: 'QS', the: 'THE', usnews: 'U.S. News', ruanke: '软科', xyh: '校友会' }
+const RANKING_SOURCE_TEXT = { qs: 'QS', the: '泰晤士', usnews: 'U.S. News', ruanke: '软科', xyh: '校友会' }
+
+// 榜单来源代码 → 介绍文案
+const RANKING_SOURCE_INTRO = {
+  qs: 'QS世界大学排名，由英国Quacquarelli Symonds发布，指标涵盖学术声誉、雇主声誉、师生比、论文引用率与国际化的强调。',
+  the: '泰晤士高等教育世界大学排名（THE），由英国泰晤士高等教育发布，侧重教学（学习环境）、研究（数量与收入）、引文、国际视野与产业收入五大维度。',
+  usnews: 'U.S. News全球最佳大学排名，由美国《美国新闻与世界报道》发布，侧重全球/地区研究声誉与文献计量指标（论文发表、引用、高被引论文等）。',
+  ruanke: '软科世界大学学术排名（ARWU），由上海软科教育信息咨询有限公司发布，侧重校友获奖、教师获奖、高被引科学家、N&S论文与国际论文总量等硬指标。',
+  xyh: '校友会中国大学排名，由艾瑞深校友会网发布，结合人才培养质量、科研成果与校友社会贡献等中国本土化评价指标。',
+}
+
+// 榜单官网链接（与数据采集源一致），参数为榜单年份
+const RANKING_SOURCE_URL = {
+  qs: () => 'https://www.topuniversities.com/world-university-rankings',
+  the: () => 'https://www.timeshighereducation.com/world-university-rankings',
+  usnews: () => 'https://www.usnews.com/education/best-global-universities/rankings',
+  ruanke: y => `https://www.shanghairanking.cn/rankings/bcur/${y || ''}`,
+  xyh: () => 'http://www.cuaa.net',
+}
+
+function rankingSourceUrl(row) {
+  const fn = RANKING_SOURCE_URL[row.sourceKey]
+  return fn ? fn(row.year) : ''
+}
 
 // 双一流建设轮次 → 年份
 const DOUBLE_FIRST_ROUND_YEAR = { 1: 2017, 2: 2022 }
@@ -899,12 +954,37 @@ const universityRankingRows = computed(() => {
   return (info.rankings || []).map(r => {
     const source = RANKING_SOURCE_TEXT[r.source] || r.source || '未知榜单'
     const rank = r.rank_raw || (r.rank_num != null ? String(r.rank_num) : '')
-    const parts = []
-    if (rank) parts.push(`第${rank}名`)
-    if (r.score != null) parts.push(`${r.score}分`)
-    return { label: `${source} ${r.year ?? ''}`.trim(), value: parts.join(' · ') || '-' }
+    return {
+      key: `${r.source}-${r.year}`,
+      sourceKey: r.source,
+      label: source,
+      year: r.year,
+      value: rank || '-',
+      rankNum: r.rank_num,
+      score: r.score,
+      maxScore: r.max_score,
+    }
   })
 })
+
+// 前三名奖牌图标：红绶带 + 金属渐变圆盘 + 内环 + 五角星
+function medalSvg(rankNum) {
+  const conf = {
+    1: { id: 'md-gold', stops: [['0%', '#fff3b8'], ['55%', '#ffc72e'], ['100%', '#f39c07']] },
+    2: { id: 'md-silver', stops: [['0%', '#ffffff'], ['55%', '#dde7f2'], ['100%', '#b0c1d4']] },
+    3: { id: 'md-bronze', stops: [['0%', '#ffd9a8'], ['55%', '#e8a24e'], ['100%', '#c9772f']] },
+  }[rankNum]
+  if (!conf) return ''
+  const stops = conf.stops.map(([o, c]) => `<stop offset="${o}" stop-color="${c}"/>`).join('')
+  return `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">`
+    + `<defs><linearGradient id="${conf.id}" x1="0" y1="0" x2="0" y2="1">${stops}</linearGradient></defs>`
+    + `<path fill="#e5544b" d="M7.2 1.5h3.4l1.2 8H8.4z"/>`
+    + `<path fill="#d64541" d="M16.8 1.5h-3.4l-1.2 8h3.4z"/>`
+    + `<circle cx="12" cy="15" r="7" fill="url(#${conf.id})" stroke="rgba(0,0,0,.15)" stroke-width="0.8"/>`
+    + `<circle cx="12" cy="15" r="5.4" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="1"/>`
+    + `<path fill="rgba(255,255,255,.9)" d="M12 11.4l.85 2.23 2.38.12-1.85 1.5.62 2.3L12 16.25l-2 1.3.62-2.3-1.85-1.5 2.38-.12z"/>`
+    + `</svg>`
+}
 
 const universityDoubleFirstRows = computed(() => {
   const info = universityDetail.value
@@ -1462,15 +1542,36 @@ onBeforeUnmount(() => {
 .university-detail-header {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
+  gap: 14px;
   margin-bottom: 16px;
+}
+
+.university-detail-head-info {
+  min-width: 0;
+}
+
+.university-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.university-tag {
+  padding: 1px 8px;
+  border: 1px solid #d9ecff;
+  border-radius: 3px;
+  background: #ecf5ff;
+  color: #409eff;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
 }
 
 .university-detail-logo {
   flex-shrink: 0;
-  width: 42px;
-  height: 42px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   object-fit: contain;
   background: #f5f7fa;
@@ -1479,14 +1580,11 @@ onBeforeUnmount(() => {
 
 .university-detail-title {
   margin: 0;
-  font-size: 28px;
-  line-height: 2;
-  position: relative;
-  top: 0px;
+  font-size: 18px;
+  line-height: 1.4;
   font-weight: 600;
   color: #303133;
   word-break: break-all;
-  text-align: center;
 }
 
 .university-detail-website-row {
@@ -1544,6 +1642,140 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   color: #606266;
+}
+
+.university-strength-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.university-strength-hint {
+  width: 13px;
+  height: 13px;
+  color: #c0c4cc;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.university-strength-hint:hover {
+  color: #909399;
+}
+
+.ranking-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ranking-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 75px;
+  height: 44px;
+  padding: 4px 2px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.ranking-chip-source {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.ranking-chip-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.ranking-medal {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ranking-medal svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+
+.ranking-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 13px;
+  color: #303133;
+}
+
+.ranking-detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ranking-detail-item + .ranking-detail-item {
+  padding-top: 10px;
+  border-top: 1px solid #ebeef5;
+}
+
+.ranking-detail-head {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.ranking-detail-link {
+  color: #409eff;
+  text-decoration: none;
+}
+
+.ranking-detail-link:hover {
+  text-decoration: underline;
+}
+
+.ranking-detail-score {
+  margin: 0;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.5;
+}
+
+.ranking-detail-intro {
+  margin: 0;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.6;
+}
+
+.ranking-detail-note {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid #ebeef5;
+  font-size: 12px;
+  color: #a8abb2;
+  line-height: 1.6;
 }
 
 .university-detail-empty {

@@ -26,6 +26,11 @@ _RANKING_SQL = (
     "WHERE university_code = ? ORDER BY source, year DESC"
 )
 
+_RANKING_MAX_SCORE_SQL = (
+    "SELECT source, year, MAX(score) AS max_score FROM ranking_record "
+    "GROUP BY source, year"
+)
+
 _DOUBLE_FIRST_SQL = (
     "SELECT round, subjects, autonomous, note FROM double_first_subject "
     "WHERE university_code = ? ORDER BY round"
@@ -78,8 +83,14 @@ def _attach_strength_data(info: dict) -> dict:
         info["discipline_evaluations"] = []
         return info
     db = get_db()
+    # 同榜单同年的最高分，供前端展示 分数/最高分
+    max_scores = {
+        (r["source"], r["year"]): r["max_score"]
+        for r in db.execute(_RANKING_MAX_SCORE_SQL).fetchall()
+    }
     info["rankings"] = [
-        dict(r) for r in db.execute(_RANKING_SQL, (code,)).fetchall()
+        {**dict(r), "max_score": max_scores.get((r["source"], r["year"]))}
+        for r in db.execute(_RANKING_SQL, (code,)).fetchall()
     ]
     info["double_first_subjects"] = [
         {**dict(r), "subjects": _parse_json_obj_list(r["subjects"])}

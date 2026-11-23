@@ -55,11 +55,70 @@
             <p class="content-desc">key 规范：{group}.{name}，如 llm.default_model；改动保存后立即对后端生效</p>
           </div>
           <div class="content-actions">
+            <el-radio-group v-model="configViewMode" size="small">
+              <el-radio-button value="quick">快捷</el-radio-button>
+              <el-radio-button value="list">列表</el-radio-button>
+            </el-radio-group>
             <el-button @click="loadConfigs">刷新</el-button>
             <el-button type="primary" @click="openConfigDialog()">新增配置</el-button>
           </div>
         </header>
-        <el-table v-loading="configsLoading" :data="configs" size="small" border class="content-table">
+        <!-- 快捷视图：单卡片分组，行内直接修改，完整编辑走弹窗 -->
+        <div v-if="configViewMode === 'quick'" v-loading="configsLoading" class="config-quick-card">
+          <div v-for="row in configs" :key="row.id" class="config-quick-item">
+            <span class="config-quick-label">{{ row.label || row.key }}</span>
+            <div class="config-quick-control">
+              <el-select
+                v-if="isModelConfig(row.key)"
+                :model-value="row.value"
+                filterable
+                size="small"
+                style="width: 320px"
+                placeholder="从启用的模型中选择"
+                @change="val => quickSaveConfig(row, val)"
+              >
+                <el-option
+                  v-for="m in modelOptionsFor(row.key)"
+                  :key="m.model_id"
+                  :label="`${m.name} (${m.model_id})`"
+                  :value="m.model_id"
+                />
+              </el-select>
+              <el-switch
+                v-else-if="row.value_type === 'boolean'"
+                :model-value="row.value === 'true'"
+                @change="val => quickSaveConfig(row, String(val))"
+              />
+              <el-input
+                v-else-if="isSecretConfig(row.key)"
+                type="password"
+                size="small"
+                style="width: 320px"
+                placeholder="已加密存储，输入新值可更换"
+                @change="val => quickSaveConfig(row, val)"
+              />
+              <el-input
+                v-else-if="row.value_type === 'json' || row.value_type === 'array'"
+                :model-value="row.value"
+                type="textarea"
+                :rows="2"
+                autosize
+                size="small"
+                style="width: 480px"
+                @change="val => quickSaveConfig(row, val)"
+              />
+              <el-input
+                v-else
+                :model-value="row.value"
+                size="small"
+                style="width: 320px"
+                @change="val => quickSaveConfig(row, val)"
+              />
+            </div>
+          </div>
+          <p v-if="!configsLoading && !configs.length" class="stat-empty">暂无配置</p>
+        </div>
+        <el-table v-else v-loading="configsLoading" :data="configs" size="small" border class="content-table">
           <el-table-column prop="key" label="Key" min-width="200" show-overflow-tooltip />
           <el-table-column prop="label" label="名称" min-width="120" show-overflow-tooltip />
           <el-table-column prop="value" label="值" min-width="200" show-overflow-tooltip />
@@ -136,7 +195,7 @@
           <header class="content-header">
             <div>
               <h2>用户管理</h2>
-              <p class="content-desc">不能修改自己的角色/状态；禁用后该用户下次请求即失效</p>
+              <p class="content-desc">不能修改自己的角色/状态；仅超级管理员可将账号设为游客；禁用后该用户下次请求即失效</p>
             </div>
             <div class="content-actions">
               <el-button @click="loadUsers">刷新</el-button>
@@ -158,6 +217,12 @@
                 <el-option label="普通用户" value="user" />
                 <el-option label="管理员" value="admin" />
                 <el-option label="超级管理员" value="super_admin" />
+                <!-- 游客选项始终保留用于正确回显已有游客账号，仅超管可选 -->
+                <el-option
+                  label="游客"
+                  value="guest"
+                  :disabled="authStore.currentUser?.role !== 'super_admin'"
+                />
               </el-select>
             </template>
           </el-table-column>
@@ -257,18 +322,17 @@
                 <span v-else class="stat-empty">-</span>
               </template>
             </el-table-column>
-            <el-table-column label="名称" min-width="170" show-overflow-tooltip>
+            <el-table-column label="名称" width="162" show-overflow-tooltip>
               <template #default="{ row }">{{ row.name }}</template>
             </el-table-column>
-            <el-table-column prop="code" label="标识码" width="110" />
+            <el-table-column prop="school_nature" label="性质" width="68" />
+            <el-table-column prop="edu_level" label="层次" width="68" />
             <el-table-column label="所在地" width="130" show-overflow-tooltip>
               <template #default="{ row }">{{ [row.province, row.city].filter(Boolean).join(' ') || '-' }}</template>
             </el-table-column>
-            <el-table-column prop="competent_department" label="主管部门" width="100" show-overflow-tooltip>
+            <el-table-column prop="competent_department" label="主管部门" width="102" show-overflow-tooltip>
               <template #default="{ row }">{{ row.competent_department || '-' }}</template>
             </el-table-column>
-            <el-table-column prop="edu_level" label="层次" width="70" />
-            <el-table-column prop="school_nature" label="性质" width="70" />
             <el-table-column label="类型" width="90">
               <template #default="{ row }">{{ CATEGORY_TEXT[row.category] || row.category || '-' }}</template>
             </el-table-column>
@@ -277,6 +341,18 @@
                 <template v-if="sortedTagTexts(row).length">
                   <el-tag v-for="text in sortedTagTexts(row)" :key="text" size="small" class="cap-tag">{{ text }}</el-tag>
                 </template>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="官网" width="150" show-overflow-tooltip>
+              <template #default="{ row }">
+                <a
+                  v-if="row.official_website"
+                  :href="row.official_website"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="university-link"
+                >{{ row.official_website }}</a>
                 <span v-else>-</span>
               </template>
             </el-table-column>
@@ -495,13 +571,13 @@
             <el-radio value="false">false</el-radio>
           </el-radio-group>
           <el-select
-            v-else-if="isDefaultModelConfig"
+            v-else-if="isModelConfig(configForm.key.trim())"
             v-model="configForm.value"
             filterable
-            placeholder="从启用的对话模型中选择"
+            placeholder="从启用的模型中选择"
           >
             <el-option
-              v-for="m in chatModels"
+              v-for="m in modelOptionsFor(configForm.key.trim())"
               :key="m.model_id"
               :label="`${m.name} (${m.model_id})`"
               :value="m.model_id"
@@ -708,7 +784,7 @@
       </div>
     </el-dialog>
     <!-- 高校详情弹窗 -->
-    <el-dialog v-model="universityDetailVisible" :title="universityDetailData?.name || '高校详情'" width="780px" align-center top="4vh">
+    <el-dialog v-model="universityDetailVisible" width="780px" align-center top="4vh">
       <div v-loading="universityDetailLoading" class="context-wrap">
         <template v-if="universityDetailData">
           <div class="university-detail-head">
@@ -899,6 +975,7 @@ async function handleApiError(error, fallback) {
 
 const configs = ref([])
 const configsLoading = ref(false)
+const configViewMode = ref('quick')
 const configDialogVisible = ref(false)
 const configSaving = ref(false)
 const configForm = reactive({
@@ -932,9 +1009,19 @@ function openConfigDialog(row = null) {
   configDialogVisible.value = true
 }
 
-/** 编辑 llm.default_model 时，值改为从启用的对话模型中选择 */
-const isDefaultModelConfig = computed(() => configForm.key.trim() === 'llm.default_model')
 const chatModels = computed(() => models.value.filter(m => m.model_type === 'chat' && m.is_enabled))
+const embeddingModels = computed(() => models.value.filter(m => m.model_type === 'embedding' && m.is_enabled))
+
+// 模型类配置 key → 选项来源（对话 / 向量模型）
+const MODEL_CONFIG_KEYS = {
+  'llm.default_model': () => chatModels.value,
+  'embedding.default_model': () => embeddingModels.value,
+}
+const isModelConfig = key => key in MODEL_CONFIG_KEYS
+const modelOptionsFor = key => (MODEL_CONFIG_KEYS[key] || (() => []))()
+
+// 密钥类配置库中为密文，快捷视图掩码展示，仅在输入新值时覆盖
+const isSecretConfig = key => /api[_-]?key$/i.test(key)
 
 async function saveConfig() {
   if (!configForm.key.trim()) {
@@ -963,6 +1050,26 @@ async function saveConfig() {
     handleApiError(error, '保存配置失败')
   } finally {
     configSaving.value = false
+  }
+}
+
+/** 快捷视图内联保存：仅更新值，其余字段保持原样 */
+async function quickSaveConfig(row, value) {
+  // 密钥类配置输入为空视为未修改，避免误清空密文
+  if (isSecretConfig(row.key) && !value) return
+  try {
+    await adminUpdateConfig(row.id, {
+      value: value || null,
+      value_type: row.value_type,
+      group_name: row.group_name,
+      label: row.label,
+      description: row.description,
+      is_public: row.is_public,
+    })
+    ElMessage.success('配置已保存')
+    await loadConfigs()
+  } catch (error) {
+    handleApiError(error, '保存配置失败')
   }
 }
 
@@ -1908,6 +2015,42 @@ onMounted(() => {
   margin-left: 10px;
   font-size: 12px;
   color: #909399;
+}
+
+.config-quick-card {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.config-quick-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 12px 16px;
+}
+
+.config-quick-item + .config-quick-item {
+  border-top: 1px solid #f2f4f7;
+}
+
+.config-quick-item:hover {
+  background: #fafbfc;
+}
+
+.config-quick-label {
+  flex-shrink: 0;
+  width: 130px;
+  padding-top: 4px;
+  font-size: 13px;
+  color: #303133;
+  text-align: right;
+}
+
+.config-quick-control {
+  flex: 1;
+  min-width: 0;
 }
 
 .capability-grid {

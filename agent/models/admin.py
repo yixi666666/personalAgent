@@ -105,7 +105,7 @@ class AdminUserItem(BaseModel):
 
 
 class AdminUserUpdate(BaseModel):
-    role: Optional[str] = Field(default=None, description="user|admin|super_admin")
+    role: Optional[str] = Field(default=None, description="user|admin|super_admin|guest")
     status: Optional[str] = Field(default=None, description="active|disabled")
 
 

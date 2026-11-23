@@ -743,6 +743,12 @@ async function copyMessage(msg) {
   color: #fff;
 }
 
+/* 用户气泡为蓝底，链接改白字加下划线，避免蓝字蓝底不可读 */
+.message-item.user .message-content :deep(a) {
+  color: #fff;
+  text-decoration: underline;
+}
+
 .message-content.error {
   background: #fef0f0;
   color: #f56c6c;

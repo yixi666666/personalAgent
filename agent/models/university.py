@@ -22,6 +22,7 @@ class UniversityRanking(BaseModel):
     rank_raw: Optional[str] = None          # 原始名次，保真存储，如 "500+"、"501-510"
     rank_num: Optional[int] = None          # 数字名次
     score: Optional[float] = None           # 总分（各榜单口径不同）
+    max_score: Optional[float] = None       # 同榜单同年全部高校的最高分
 
 
 class DoubleFirstSubject(BaseModel):

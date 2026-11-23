@@ -50,7 +50,7 @@ router = APIRouter(dependencies=[Depends(require_admin)])
 
 VALUE_TYPES = {"string", "number", "boolean", "json", "array"}
 ANNOUNCEMENT_STATUSES = {"draft", "published", "offline"}
-USER_ROLES = {"user", "admin", "super_admin"}
+USER_ROLES = {"user", "admin", "super_admin", "guest"}
 USER_STATUSES = {"active", "disabled"}
 
 
@@ -332,6 +332,9 @@ def list_users():
 def update_user(user_id: str, payload: AdminUserUpdate, current_user: dict = Depends(require_admin)):
     if payload.role is not None and payload.role not in USER_ROLES:
         raise _bad_request(ValueError(f"不支持的角色: {payload.role}"))
+    # 游客角色仅超级管理员可设置
+    if payload.role == "guest" and current_user["role"] != "super_admin":
+        raise HTTPException(status_code=403, detail="仅超级管理员可将账号设为游客")
     if payload.status is not None and payload.status not in USER_STATUSES:
         raise _bad_request(ValueError(f"不支持的状态: {payload.status}"))
     if user_id == current_user["id"]:
