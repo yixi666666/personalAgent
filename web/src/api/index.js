@@ -187,6 +187,11 @@ export async function upgradeAccount(payload) {
   return data
 }
 
+export async function forgotPassword(payload) {
+  const { data } = await api.post('/auth/forgot-password', payload)
+  return data
+}
+
 export async function logoutUser() {
   await api.post('/auth/logout')
 }
@@ -247,11 +252,6 @@ export async function revokeFeedback(messageId) {
 
 export async function listModels() {
   const { data } = await api.get('/models')
-  return data
-}
-
-export async function listTools() {
-  const { data } = await api.get('/tools')
   return data
 }
 
@@ -385,8 +385,13 @@ export async function adminDeleteFeedbackReason(id) {
   await api.delete(`/admin/feedbacks/reasons/${id}`)
 }
 
-export async function adminListUniversities() {
-  const { data } = await api.get('/admin/universities')
+export async function adminListUniversities(params = {}) {
+  const { data } = await api.get('/admin/universities', { params })
+  return data
+}
+
+export async function adminGetUniversitySummary() {
+  const { data } = await api.get('/admin/universities/summary')
   return data
 }
 

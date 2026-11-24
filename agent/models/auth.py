@@ -16,6 +16,14 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1)
 
 
+class ForgotPasswordRequest(BaseModel):
+    """忘记密码：账号+邮箱匹配后直接设置新密码并登录"""
+
+    username: str = Field(..., min_length=1)
+    email: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=1)
+
+
 class UpgradeRequest(BaseModel):
     """游客账号转正：username/password 必填，email/display_name 可选"""
 

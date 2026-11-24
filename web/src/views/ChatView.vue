@@ -362,7 +362,18 @@
             <el-input v-model="profileForm.display_name" placeholder="设置你的显示名称" />
           </el-form-item>
           <el-form-item label="邮箱">
-            <el-input v-model="profileForm.email" placeholder="绑定邮箱" />
+            <el-input
+              v-model="emailDisplay"
+              :readonly="emailMasked"
+              placeholder="绑定邮箱"
+            >
+              <template #suffix>
+                <el-icon v-if="profileForm.email" class="email-eye" @click="emailMasked = !emailMasked">
+                  <Hide v-if="emailMasked" />
+                  <View v-else />
+                </el-icon>
+              </template>
+            </el-input>
           </el-form-item>
         </el-form>
         <div class="profile-actions">
@@ -448,6 +459,7 @@ import ChatArea from '../components/ChatArea.vue'
 import { useChatStore } from '../stores/chat'
 import { useAuthStore } from '../stores/auth'
 import { getUniversity, listAnnouncements, getUnreadAnnouncementCount, markAnnouncementRead } from '../api'
+import { View, Hide } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const chatStore = useChatStore()
@@ -459,6 +471,18 @@ const settingsVisible = ref(false)
 // 设置弹窗视图：'main' 主列表 | 'profile' 个人信息面板
 const settingsView = ref('main')
 const profileForm = reactive({ username: '', display_name: '', email: '' })
+// 邮箱脱敏：默认遮罩显示，点击眼睛切换明文；遮罩期间输入框只读防止误改
+const emailMasked = ref(true)
+const emailDisplay = computed({
+  get: () => (profileForm.email && emailMasked.value ? maskEmail(profileForm.email) : profileForm.email),
+  set: value => { profileForm.email = value },
+})
+
+function maskEmail(email) {
+  const at = email.indexOf('@')
+  if (at <= 0) return email
+  return `${email.slice(0, 2)}***${email.slice(at)}`
+}
 const profileRoleLabels = { guest: '游客', user: '普通用户', admin: '管理员', super_admin: '超级管理员' }
 const profileRoleLabel = computed(() => profileRoleLabels[authStore.currentUser?.role] || '用户')
 
@@ -474,6 +498,7 @@ const profileInitial = computed(() => {
 watch(settingsVisible, (visible) => {
   if (!visible) return
   settingsView.value = 'main'
+  emailMasked.value = true
   const user = authStore.currentUser || {}
   profileForm.username = user.username || ''
   profileForm.display_name = user.display_name || ''
@@ -1388,7 +1413,6 @@ onMounted(async () => {
   await Promise.all([
     chatStore.loadSessions(),
     chatStore.loadModels(),
-    chatStore.loadTools(),
     loadUnreadCount()
   ])
   const savedSessionId = localStorage.getItem('currentSessionId')
@@ -2236,6 +2260,15 @@ onBeforeUnmount(() => {
 .profile-panel {
   display: flex;
   flex-direction: column;
+}
+
+.email-eye {
+  cursor: pointer;
+  color: #909399;
+}
+
+.email-eye:hover {
+  color: #409eff;
 }
 
 .profile-back {

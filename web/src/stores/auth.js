@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import {
+  forgotPassword as requestForgotPassword,
   getCurrentUser,
   guestLogin as requestGuestLogin,
   loginUser,
@@ -75,6 +76,12 @@ export const useAuthStore = defineStore('auth', () => {
     return currentUser.value
   }
 
+  async function resetPassword(payload) {
+    currentUser.value = await requestForgotPassword(payload)
+    initialized.value = true
+    return currentUser.value
+  }
+
   // 读取并清除「刚以游客登录」标记，保证引导弹窗每次游客登录只弹一次
   function consumeGuestLoginFlag() {
     const flag = justGuestLoggedIn.value
@@ -98,6 +105,7 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     guestLogin,
     upgrade,
+    resetPassword,
     consumeGuestLoginFlag,
     logout,
     clearCurrentUser,

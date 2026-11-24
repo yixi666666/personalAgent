@@ -1,6 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
-from agent.models.auth import LoginRequest, RegisterRequest, UpgradeRequest, UserResponse
+from agent.models.auth import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    RegisterRequest,
+    UpgradeRequest,
+    UserResponse,
+)
 from agent.services.auth import (
     AUTH_COOKIE_NAME,
     create_auth_cookie,
@@ -40,6 +46,19 @@ def login(payload: LoginRequest, request: Request, response: Response):
         user = get_auth_service().login(payload.username, payload.password, client_ip)
     except PermissionError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    _set_auth_cookie(response, user["id"])
+    return user
+
+
+@router.post("/auth/forgot-password", response_model=UserResponse)
+def forgot_password(payload: ForgotPasswordRequest, request: Request, response: Response):
+    client_ip = request.client.host if request.client else None
+    try:
+        user = get_auth_service().forgot_password(
+            payload.username, payload.email, payload.new_password, client_ip
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     _set_auth_cookie(response, user["id"])
     return user
 

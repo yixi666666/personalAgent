@@ -27,6 +27,8 @@ from agent.models.admin import (
     AdminFeedbackReasonUpdate,
     AdminFeedbackStats,
     AdminUniversityItem,
+    AdminUniversityPage,
+    AdminUniversitySummary,
     AdminUniversityUpdate,
     AdminUserItem,
     AdminUserUpdate,
@@ -41,7 +43,7 @@ from agent.models.university import UniversityInfo
 from agent.services.auth import require_admin
 from agent.services.model_service import encrypt_api_key
 from agent.services.session import get_session_manager
-from agent.services.university import get_university_by_id, list_universities
+from agent.services.university import get_university_by_id, page_universities, university_summary
 from agent.models.session import ToolCallDetail
 
 logger = logging.getLogger(__name__)
@@ -746,10 +748,28 @@ def _university_item(info: dict) -> AdminUniversityItem:
     )
 
 
-@router.get("/universities", response_model=list[AdminUniversityItem])
-def admin_list_universities():
-    """全部高校基础信息列表（不含实力数据），前端本地筛选与分页"""
-    return [_university_item(info) for info in list_universities()]
+@router.get("/universities", response_model=AdminUniversityPage)
+def admin_page_universities(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    keyword: str = Query(default=""),
+    province: str = Query(default=""),
+    tag: str = Query(default=""),
+    edu_level: str = Query(default=""),
+    category: str = Query(default=""),
+):
+    """高校条件分页列表（不含实力数据），筛选与分页均在后端完成"""
+    result = page_universities(page, page_size, keyword, province, tag, edu_level, category)
+    return AdminUniversityPage(
+        total=result["total"],
+        items=[_university_item(info) for info in result["items"]],
+    )
+
+
+@router.get("/universities/summary", response_model=AdminUniversitySummary)
+def admin_university_summary():
+    """高校统计：总数 / 层次分布 / 标签分布 / 省份列表"""
+    return AdminUniversitySummary(**university_summary())
 
 
 @router.get("/universities/{university_id}", response_model=UniversityInfo)

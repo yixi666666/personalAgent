@@ -152,6 +152,28 @@ class AuthService:
         updated = db.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
         return _user_dict(updated)
 
+    def forgot_password(self, username: str, email: str, new_password: str, client_ip: Optional[str] = None) -> dict:
+        """账号+邮箱匹配后直接重置密码并视为登录（无需旧密码），游客账号无邮箱不可用"""
+        db = get_db()
+        row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        if (
+            not row
+            or row["role"] == "guest"
+            or not row["email"]
+            or row["email"].strip().lower() != email.strip().lower()
+        ):
+            raise ValueError("账号与邮箱不匹配")
+
+        salt = uuid.uuid4().hex
+        now = int(time.time())
+        db.execute(
+            "UPDATE users SET password_hash = ?, salt = ?, last_login_time = ?, last_login_ip = ?, updated_time = ? WHERE id = ?",
+            (_password_hash(new_password, salt), salt, now, client_ip, now, row["id"]),
+        )
+        db.commit()
+        updated = db.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
+        return _user_dict(updated)
+
     def create_guest(self, client_ip: Optional[str] = None) -> dict:
         """创建游客账号：随机用户名 + 占位密码（不对外返回），role='guest'"""
         db = get_db()

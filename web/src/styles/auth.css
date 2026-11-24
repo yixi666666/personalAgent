@@ -48,6 +48,27 @@
   margin-top: 4px;
 }
 
+.auth-forgot {
+  margin-top: 8px;
+  text-align: right;
+}
+
+.auth-forgot a {
+  color: #409eff;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.auth-forgot a:hover {
+  text-decoration: underline;
+}
+
+.forgot-tip {
+  margin: 0;
+  color: #909399;
+  font-size: 12px;
+}
+
 .auth-divider {
   display: flex;
   align-items: center;

@@ -19,8 +19,6 @@ _SELECT_SQL = (
     "FROM universities"
 )
 
-_LIST_SQL = _SELECT_SQL + " ORDER BY code"
-
 _RANKING_SQL = (
     "SELECT source, year, rank_raw, rank_num, score FROM ranking_record "
     "WHERE university_code = ? ORDER BY source, year DESC"
@@ -119,9 +117,74 @@ def get_university_by_id(university_id: str) -> Optional[dict]:
     return _attach_strength_data(_parse_university_row(row))
 
 
-def list_universities() -> list[dict]:
-    """全部高校基础信息列表（不含实力数据），按标识码排序"""
-    return [
-        _parse_university_row(row)
-        for row in get_db().execute(_LIST_SQL).fetchall()
+def page_universities(
+    page: int,
+    page_size: int,
+    keyword: str = "",
+    province: str = "",
+    tag: str = "",
+    edu_level: str = "",
+    category: str = "",
+) -> dict:
+    """条件分页查询高校基础信息（不含实力数据），按标识码排序
+
+    keyword 模糊匹配 名称 / 标识码 / 别名；province / edu_level / category 精确匹配；
+    tag 匹配 JSON 数组中的完整元素（带引号防止子串误命中）。
+    """
+    conditions: list[str] = []
+    params: list = []
+    if keyword:
+        conditions.append("(name LIKE ? OR code LIKE ? OR aliases LIKE ?)")
+        like = f"%{keyword}%"
+        params.extend([like, like, like])
+    if province:
+        conditions.append("province = ?")
+        params.append(province)
+    if tag:
+        conditions.append("tags LIKE ?")
+        params.append(f'%"{tag}"%')
+    if edu_level:
+        conditions.append("edu_level = ?")
+        params.append(edu_level)
+    if category:
+        conditions.append("category = ?")
+        params.append(category)
+    where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    db = get_db()
+    total = db.execute(
+        "SELECT COUNT(*) FROM universities" + where, params
+    ).fetchone()[0]
+    rows = db.execute(
+        _SELECT_SQL + where + " ORDER BY code LIMIT ? OFFSET ?",
+        [*params, page_size, (page - 1) * page_size],
+    ).fetchall()
+    return {
+        "total": total,
+        "items": [_parse_university_row(row) for row in rows],
+    }
+
+
+def university_summary() -> dict:
+    """高校统计：总数 / 层次分布 / 标签分布 / 省份列表（供管理端筛选与卡片展示）"""
+    db = get_db()
+    total, bachelor = db.execute(
+        "SELECT COUNT(*), SUM(CASE WHEN edu_level = '本科' THEN 1 ELSE 0 END) FROM universities"
+    ).fetchone()
+    tag_counts: dict[str, int] = {}
+    for row in db.execute("SELECT tags FROM universities WHERE tags IS NOT NULL").fetchall():
+        for tag in _parse_json_str_list(row["tags"]):
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    provinces = [
+        row["province"]
+        for row in db.execute(
+            "SELECT DISTINCT province FROM universities "
+            "WHERE province IS NOT NULL AND province != '' ORDER BY province"
+        ).fetchall()
     ]
+    return {
+        "total": total,
+        "edu_level_counts": {"本科": bachelor or 0},
+        "tag_counts": tag_counts,
+        "provinces": provinces,
+    }

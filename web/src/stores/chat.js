@@ -10,7 +10,6 @@ import {
   getToolCalls,
   listModels,
   listSessions,
-  listTools,
   pinSession,
   revokeFeedback,
   retryChatStream,
@@ -36,7 +35,6 @@ export const useChatStore = defineStore('chat', () => {
   const loading = ref(false)
   const currentModel = ref(null)
   const models = ref([])
-  const tools = ref([])
   const streamingContent = ref('')
   const streamingReasoning = ref('')
   const streaming = ref(false)
@@ -776,15 +774,6 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function loadToolsData() {
-    try {
-      const data = await listTools()
-      tools.value = data.tools || []
-    } catch (err) {
-      console.error('加载工具列表失败:', err)
-    }
-  }
-
   /** 拉取拉踩原因字典（幂等，失败时不影响反馈主流程） */
   async function loadDislikeReasons() {
     if (dislikeReasons.value.length > 0) return
@@ -890,7 +879,6 @@ export const useChatStore = defineStore('chat', () => {
     loading,
     currentModel,
     models,
-    tools,
     streamingContent,
     streamingReasoning,
     streaming,
@@ -920,7 +908,6 @@ export const useChatStore = defineStore('chat', () => {
     submitFeedback: submitFeedbackAction,
     revokeFeedback: revokeFeedbackAction,
     loadModels: loadModelsData,
-    loadTools: loadToolsData,
     clearUserData,
   }
 })

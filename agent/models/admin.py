@@ -239,6 +239,18 @@ class AdminUniversityItem(BaseModel):
     updated_time: Optional[int] = None
 
 
+class AdminUniversityPage(BaseModel):
+    total: int = 0
+    items: list[AdminUniversityItem] = []
+
+
+class AdminUniversitySummary(BaseModel):
+    total: int = 0
+    edu_level_counts: dict[str, int] = {}
+    tag_counts: dict[str, int] = {}
+    provinces: list[str] = []
+
+
 class AdminUniversityUpdate(BaseModel):
     name: Optional[str] = Field(default=None, description="高校全称，全局唯一")
     aliases: Optional[list[str]] = Field(default=None, description="别名列表，空列表表示清空")

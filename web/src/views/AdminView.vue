@@ -260,13 +260,14 @@
 
       <!-- 高校信息 -->
       <template v-else-if="activeTab === 'universities'">
+        <div class="universities-tab">
         <header class="content-header">
           <div>
             <h2>高校信息</h2>
             <p class="content-desc">全国高校基础数据总览与维护；修改名称/别名后需运行 sync_universities.py --rebuild-vec 同步向量索引</p>
           </div>
           <div class="content-actions">
-            <el-button @click="loadUniversities">刷新</el-button>
+            <el-button @click="loadUniversityTab">刷新</el-button>
           </div>
         </header>
 
@@ -290,26 +291,25 @@
             placeholder="搜索名称 / 别名 / 标识码"
             clearable
             style="width: 220px"
-            @input="universityPage = 1"
           />
-          <el-select v-model="universityFilter.province" placeholder="全部省份" clearable filterable style="width: 150px" @change="universityPage = 1">
+          <el-select v-model="universityFilter.province" placeholder="全部省份" clearable filterable style="width: 150px">
             <el-option v-for="p in provinceOptions" :key="p" :label="p" :value="p" />
           </el-select>
-          <el-select v-model="universityFilter.tag" placeholder="全部标签" clearable style="width: 140px" @change="universityPage = 1">
+          <el-select v-model="universityFilter.tag" placeholder="全部标签" clearable style="width: 140px">
             <el-option v-for="t in TAG_OPTIONS" :key="t.value" :label="t.label" :value="t.value" />
           </el-select>
-          <el-select v-model="universityFilter.edu_level" placeholder="全部层次" clearable style="width: 120px" @change="universityPage = 1">
+          <el-select v-model="universityFilter.edu_level" placeholder="全部层次" clearable style="width: 120px">
             <el-option label="本科" value="本科" />
             <el-option label="专科" value="专科" />
           </el-select>
-          <el-select v-model="universityFilter.category" placeholder="全部类型" clearable style="width: 130px" @change="universityPage = 1">
+          <el-select v-model="universityFilter.category" placeholder="全部类型" clearable style="width: 130px">
             <el-option label="普通高校" value="ordinary" />
             <el-option label="成人高校" value="adult" />
           </el-select>
         </div>
 
         <div class="universities-table-wrap">
-          <el-table v-loading="universitiesLoading" :data="pagedUniversities" size="small" border height="100%" class="content-table universities-table">
+          <el-table v-loading="universitiesLoading" :data="universities" size="small" border height="100%" class="content-table universities-table">
             <el-table-column label="校徽" width="64" align="center">
               <template #default="{ row }">
                 <el-image
@@ -336,14 +336,6 @@
             <el-table-column label="类型" width="90">
               <template #default="{ row }">{{ CATEGORY_TEXT[row.category] || row.category || '-' }}</template>
             </el-table-column>
-            <el-table-column label="标签" min-width="200">
-              <template #default="{ row }">
-                <template v-if="sortedTagTexts(row).length">
-                  <el-tag v-for="text in sortedTagTexts(row)" :key="text" size="small" class="cap-tag">{{ text }}</el-tag>
-                </template>
-                <span v-else>-</span>
-              </template>
-            </el-table-column>
             <el-table-column label="官网" width="150" show-overflow-tooltip>
               <template #default="{ row }">
                 <a
@@ -353,6 +345,14 @@
                   rel="noopener noreferrer"
                   class="university-link"
                 >{{ row.official_website }}</a>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="标签" min-width="200">
+              <template #default="{ row }">
+                <template v-if="sortedTagTexts(row).length">
+                  <el-tag v-for="text in sortedTagTexts(row)" :key="text" size="small" class="cap-tag">{{ text }}</el-tag>
+                </template>
                 <span v-else>-</span>
               </template>
             </el-table-column>
@@ -367,11 +367,12 @@
         <div class="table-pagination">
           <el-pagination
             v-model:current-page="universityPage"
-            :total="filteredUniversities.length"
+            :total="universityTotal"
             :page-size="UNIVERSITY_PAGE_SIZE"
             layout="total, prev, pager, next"
             background
           />
+        </div>
         </div>
       </template>
 
@@ -912,7 +913,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Bell, ChatDotRound, Cpu, Pointer, School, Setting, User } from '@element-plus/icons-vue'
@@ -945,6 +946,7 @@ import {
   adminUpdateUser,
   adminToolCalls,
   adminGetUniversity,
+  adminGetUniversitySummary,
   adminListUniversities,
 } from '../api'
 
@@ -1580,19 +1582,21 @@ const DOUBLE_FIRST_ROUND_YEAR = { 1: 2017, 2: 2022 }
 
 const universities = ref([])
 const universitiesLoading = ref(false)
-const UNIVERSITY_PAGE_SIZE = 15
+const UNIVERSITY_PAGE_SIZE = 10
 const universityPage = ref(1)
+const universityTotal = ref(0)
 const universityFilter = reactive({ keyword: '', province: '', tag: '', edu_level: '', category: '' })
+const universitySummary = ref({ total: 0, edu_level_counts: {}, tag_counts: {}, provinces: [] })
 
-const provinceOptions = computed(() => [...new Set(universities.value.map(u => u.province).filter(Boolean))])
+const provinceOptions = computed(() => universitySummary.value.provinces || [])
 
 /** 统计卡片：filter 描述点击后应用的筛选条件，null 表示点击清空全部筛选 */
 const universityStats = computed(() => {
-  const list = universities.value
-  const tagCount = code => list.filter(u => (u.tags || []).includes(code)).length
+  const summary = universitySummary.value
+  const tagCount = code => summary.tag_counts[code] || 0
   return [
-    { label: '高校总数', value: list.length, filter: null },
-    { label: '本科', value: list.filter(u => u.edu_level === '本科').length, filter: { key: 'edu_level', value: '本科' } },
+    { label: '高校总数', value: summary.total, filter: null },
+    { label: '本科', value: summary.edu_level_counts['本科'] || 0, filter: { key: 'edu_level', value: '本科' } },
     { label: '985工程', value: tagCount('985'), filter: { key: 'tag', value: '985' } },
     { label: '211工程', value: tagCount('211'), filter: { key: 'tag', value: '211' } },
     { label: '双一流', value: tagCount('double_first'), filter: { key: 'tag', value: 'double_first' } },
@@ -1621,26 +1625,6 @@ function toggleStatFilter(stat) {
   universityPage.value = 1
 }
 
-const filteredUniversities = computed(() => {
-  const kw = universityFilter.keyword.trim().toLowerCase()
-  return universities.value.filter(u => {
-    if (universityFilter.province && u.province !== universityFilter.province) return false
-    if (universityFilter.tag && !(u.tags || []).includes(universityFilter.tag)) return false
-    if (universityFilter.edu_level && u.edu_level !== universityFilter.edu_level) return false
-    if (universityFilter.category && u.category !== universityFilter.category) return false
-    if (kw) {
-      const hay = [u.name, u.code, ...(u.aliases || [])].filter(Boolean).join(' ').toLowerCase()
-      if (!hay.includes(kw)) return false
-    }
-    return true
-  })
-})
-
-const pagedUniversities = computed(() => {
-  const start = (universityPage.value - 1) * UNIVERSITY_PAGE_SIZE
-  return filteredUniversities.value.slice(start, start + UNIVERSITY_PAGE_SIZE)
-})
-
 /** tags 代码列表 → 按固定顺序映射为展示名称 */
 function sortedTagTexts(row) {
   return (row.tags || [])
@@ -1660,15 +1644,54 @@ function universityLogoSrc(name) {
 async function loadUniversities() {
   universitiesLoading.value = true
   try {
-    universities.value = await adminListUniversities()
-    const maxPage = Math.max(1, Math.ceil(filteredUniversities.value.length / UNIVERSITY_PAGE_SIZE))
-    if (universityPage.value > maxPage) universityPage.value = maxPage
+    const data = await adminListUniversities({
+      page: universityPage.value,
+      page_size: UNIVERSITY_PAGE_SIZE,
+      keyword: universityFilter.keyword.trim(),
+      province: universityFilter.province,
+      tag: universityFilter.tag,
+      edu_level: universityFilter.edu_level,
+      category: universityFilter.category,
+    })
+    universityTotal.value = data.total
+    universities.value = data.items
+    // 筛选后当前页越界时回退到最后一页再查一次
+    const maxPage = Math.max(1, Math.ceil(data.total / UNIVERSITY_PAGE_SIZE))
+    if (universityPage.value > maxPage) {
+      universityPage.value = maxPage
+      return loadUniversities()
+    }
   } catch (error) {
     handleApiError(error, '加载高校列表失败')
   } finally {
     universitiesLoading.value = false
   }
 }
+
+async function loadUniversitySummary() {
+  try {
+    universitySummary.value = await adminGetUniversitySummary()
+  } catch (error) {
+    handleApiError(error, '加载高校统计失败')
+  }
+}
+
+function loadUniversityTab() {
+  loadUniversitySummary()
+  loadUniversities()
+}
+
+// 筛选变化时回到第一页重新查询；翻页时查询当前页
+watch(universityFilter, () => {
+  if (universityPage.value === 1) {
+    loadUniversities()
+  } else {
+    universityPage.value = 1
+  }
+})
+watch(universityPage, () => {
+  loadUniversities()
+})
 
 // ---- 高校详情 ----
 
@@ -1823,13 +1846,26 @@ async function handleLogout() {
   }
 }
 
+// 各板块懒加载：首次切换到该板块时才请求数据，避免进入管理端一次性查询所有板块
+const loadedTabs = new Set()
+const TAB_LOADERS = {
+  configs: loadConfigs,
+  models: loadModels,
+  users: loadUsers,
+  universities: loadUniversityTab,
+  announcements: loadAnnouncements,
+  feedbacks: loadFeedbackAll,
+}
+watch(activeTab, tab => {
+  if (!loadedTabs.has(tab)) {
+    loadedTabs.add(tab)
+    TAB_LOADERS[tab]?.()
+  }
+})
+
 onMounted(() => {
-  loadConfigs()
-  loadModels()
-  loadUsers()
-  loadUniversities()
-  loadAnnouncements()
-  loadFeedbackAll()
+  loadedTabs.add(activeTab.value)
+  TAB_LOADERS[activeTab.value]?.()
 })
 </script>
 
@@ -2074,6 +2110,17 @@ onMounted(() => {
 }
 
 /* ===== 高校信息 ===== */
+
+/* 板块整体纵向布局：头部/统计/筛选固定，表格占满剩余高度、分页固定底部 */
+.universities-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.universities-tab .content-header {
+  flex-shrink: 0;
+}
 
 /* 与用户管理一致：表格占满剩余高度、表体内滚动、分页固定底部 */
 .universities-table-wrap {
